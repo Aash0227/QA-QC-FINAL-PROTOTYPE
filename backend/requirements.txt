@@ -1,0 +1,8 @@
+# QA-QC Automated System — prototype backend
+# Pin to versions already present in the environment used to build the prototype.
+fastapi==0.136.1
+uvicorn==0.47.0
+PyMuPDF==1.27.2.3
+python-multipart==0.0.20
+Pillow==12.2.0
+mcp==1.27.2

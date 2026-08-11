@@ -1,0 +1,13 @@
+{
+  "name": "qaqc-frontend-tests",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Playwright smoke suite for the QA-QC webapp (production-plan §9). Dev-only — the app itself ships as native ES modules with no build step.",
+  "scripts": {
+    "test": "playwright test",
+    "test:install": "playwright install chromium"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.61.1"
+  }
+}

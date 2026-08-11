@@ -1,0 +1,57 @@
+/* tokens.css — THE design system (production-plan §7).
+   Single source of truth for color + type. The Autopilot/report aesthetic is
+   now the app aesthetic: ink canvas, IBM Plex body/mono, Big Shoulders display,
+   signal-teal accent, markup-orange for corrections.
+
+   BUG-12: #bmwizard used to redefine this whole palette as private --bw-*
+   literals. That duplication is deleted — the wizard now references these
+   globals through the --bw-* ALIASES below (kept as names only, one place, so
+   the wizard's rules didn't all need rewriting). */
+:root{
+  /* ---- canonical §7 palette ---- */
+  --ink:#0B0D10;      /* app background */
+  --panel-solid:#14171C;
+  --panel2:#191D24;
+  --line:#262B33;
+  --paper:#ECE9E1;    /* primary text */
+  --dim:#9AA0A6;
+  --signal:#5EEAD4;   /* accent */
+  --markup:#FF5A36;   /* corrections / destructive */
+
+  /* ---- app aliases (historical names, same values — behaviour-preserving) ---- */
+  --bg:var(--ink);
+  --panel:rgba(20,23,28,.82);   /* translucent glass — the app's panel treatment */
+  --txt:var(--paper);
+  --accent:var(--signal);
+
+  /* ---- semantic status colors (legend + documented baselines — untouched) ---- */
+  --match:#22c55e; --revitonly:#ef4444;
+  --warn:#fbbf24;               /* caution copy: scope banner, mismatch rows, unverified */
+
+  /* ---- motion (UI plan §4). enter .24s / exit ≈65% of enter. ---- */
+  --dur-fast:.14s;              /* press / hover feedback */
+  --dur:.24s;                   /* enter: drawers, banners, cards */
+  --dur-exit:.16s;              /* exit */
+  --ease:cubic-bezier(.22,1,.36,1);
+
+  /* ---- wizard aliases → global tokens (BUG-12 dedup) ---- */
+  --bw-ink:var(--ink); --bw-panel:var(--panel-solid); --bw-panel2:var(--panel2);
+  --bw-line:var(--line); --bw-paper:var(--paper); --bw-dim:var(--dim);
+  --bw-signal:var(--signal); --bw-markup:var(--markup);
+
+  /* ---- type ---- */
+  --font-body:'IBM Plex Sans',-apple-system,system-ui,sans-serif;
+  --font-display:'Big Shoulders Display',system-ui,sans-serif;
+  --font-mono:'IBM Plex Mono',ui-monospace,'SF Mono',Consolas,monospace;
+}
+
+/* One global kill-switch for CSS motion (UI plan §4 defect 2). GSAP tweens are
+   NOT covered by this — util.js:reduceMotion() guards the infinite ones. */
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{
+    animation-duration:.01ms!important;
+    animation-iteration-count:1!important;
+    transition-duration:.01ms!important;
+    scroll-behavior:auto!important;
+  }
+}

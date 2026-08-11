@@ -1,0 +1,41 @@
+# Never commit secrets
+.env
+
+# Generated artifacts
+artifacts/
+artifacts_*/
+**/uploads/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+
+# BUG-13: project artifact workspaces + large binaries are runtime state, not source
+artifacts/projects/
+artifacts_madera_snapshot/
+artifacts_old_contaminated/
+*.pdf
+*.ifc
+*.rvt
+.playwright-mcp/
+graphify-out/
+node_modules/
+
+# §9/§10: Playwright + runtime logs (dev-only / regenerable)
+playwright-report/
+test-results/
+logs/
+
+# machine-local dev state (never ship)
+server-out.log
+server-err.log
+test-progress.log
+*.log
+.claude/settings.json
+dist/
+.claude/ralph-loop.local.md
+
+# Hermes agent state
+.hermes/
