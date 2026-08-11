@@ -87,7 +87,7 @@ try {
 # ---------------------------------------------------------------- 5. pyRevit exporter extension
 Step "Checking pyRevit + QA-QC exporter"
 $pyrevitExtDir = "$env:APPDATA\pyRevit\Extensions"
-$bundledExt = Join-Path $repoRoot "tools\qaqc_pyrevit.extension"
+$bundledExt = Join-Path $repoRoot "tools\LivioQAQC.extension"
 if (-not (Test-Path $pyrevitExtDir)) {
     Warn "pyRevit is not installed on this computer."
     $manual += "Install pyRevit: download pyRevit from https://github.com/pyrevitlabs/pyRevit/releases and run the installer (no admin needed). Then re-run QAQC_Setup.bat to install the QA-QC exporter."
