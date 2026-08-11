@@ -100,7 +100,7 @@ if (-not (Test-Path $pyrevitExtDir)) {
         catch { Bad "could not copy exporter to $dest ($_)" }
     } else { Ok "QA-QC exporter already installed ($dest)" }
 } else {
-    Warn "pyRevit is installed but no bundled exporter found at tools\qaqc_pyrevit.extension."
+    Warn "pyRevit is installed but no bundled exporter found at tools\LivioQAQC.extension."
     $manual += "Ask engineering for the QA-QC exporter folder, then copy it into $pyrevitExtDir\ and restart Revit."
 }
 
