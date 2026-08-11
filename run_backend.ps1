@@ -28,9 +28,13 @@ if ($Prod) {
 # are deliberately not set here: the code defaults already match DEPLOY.md, so
 # hardcoding them would only create a second place to keep in sync.
 
-$py311 = "C:\Users\aashd\AppData\Local\Programs\Python\Python311\python.exe"
-if (Test-Path $py311) {
-    & $py311 @uvicornArgs
-} else {
+# Prefer the py launcher (works on any machine with Python 3.11 installed);
+# fall back to a hardcoded path only if the launcher is missing.
+$pyLauncher = Get-Command py -ErrorAction SilentlyContinue
+if ($pyLauncher) {
     & py -3.11 @uvicornArgs
+} elseif (Test-Path "C:\Users\aashd\AppData\Local\Programs\Python\Python311\python.exe") {
+    & "C:\Users\aashd\AppData\Local\Programs\Python\Python311\python.exe" @uvicornArgs
+} else {
+    Write-Error "Python 3.11 not found. Install it or run scripts\QAQC_Setup.bat."
 }

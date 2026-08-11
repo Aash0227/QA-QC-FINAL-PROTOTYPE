@@ -25,8 +25,9 @@ export default defineConfig({
   ],
   webServer: {
     // Backend vendors PIL/fitz for CPython 3.11 — bare `python` may resolve to
-    // a different interpreter (e.g. a venv) that lacks fitz. Pin 3.11.
-    command: "\"C:/Users/aashd/AppData/Local/Programs/Python/Python311/python.exe\" -m uvicorn app.main:app --port 8017",
+    // a different interpreter (e.g. a venv) that lacks fitz. Use the py launcher
+    // (works on any machine with Python 3.11 installed via the installer).
+    command: "py -3.11 -m uvicorn app.main:app --port 8017",
     cwd: "../backend",
     url: `${BASE}/api/health`,
     reuseExistingServer: true,
