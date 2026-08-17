@@ -56,7 +56,7 @@ export async function loadAll(first = false) {
       `${(el.counts.by_status.PDF_ONLY || 0) + (el.counts.by_status.REVIT_ONLY || 0) + (el.counts.by_status.LOCATION_MISMATCH || 0)} flagged`;
   } catch (e) {
     ok = false;
-    $("#hdr-stats").textContent = "no data yet — open ▶ Run the check";
+    $("#hdr-stats").textContent = "no data yet — open ⚡ Pipeline";
   }
   if (!ok) { if (first) openPipeline(); return; }
   try {
@@ -293,7 +293,7 @@ async function pollRunState() {
   renderPipeline();
 }
 
-$("#btn-pipe").onclick = () => { window.location.href = "/"; };
+$("#btn-pipe").onclick = () => { $("#pipe-modal").classList.add("open"); startRun(); };
 $("#btn-pipe-close").onclick = () => $("#pipe-modal").classList.remove("open");
 
 /* ---------------- boot ---------------- */
