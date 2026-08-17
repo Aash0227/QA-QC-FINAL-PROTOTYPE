@@ -6,9 +6,9 @@
    now read the global aliases defined in tokens.css. */
 
 *{box-sizing:border-box} html,body{height:100%}
-body{margin:0;background:radial-gradient(1400px 900px at 70% -10%,#161a20 0%,var(--bg) 55%);
+body{margin:0;background:rgba(11,13,16,.65);
   color:var(--txt);font:13.5px/1.55 var(--font-body);overflow:hidden}
-#kinetic-bg{position:fixed;inset:0;z-index:0;pointer-events:none;opacity:.75}
+#kinetic-bg{position:fixed;inset:0;z-index:0;pointer-events:none;opacity:1}
 
 /* header height is `auto` so the 4 zones can wrap on narrow screens instead of
    clipping — ponytail: honest overflow without a bespoke hidden-menu widget;
