@@ -59,8 +59,24 @@ def test_generic_path_never_fabricates_schedule_specs() -> None:
         assert d["schedule_source"] == "none"
 
 
-def test_legacy_path_still_gets_the_default_schedule_and_says_so() -> None:
-    """schedule=None (the Madera S-201 call) is unchanged, but now labelled."""
+def test_legacy_path_never_fabricates_without_profile() -> None:
+    """schedule=None (the legacy S-201 call) must NOT substitute Madera's
+    defaults unless the project opted into the madera profile — honest
+    'schedule_not_parsed' + empty specs otherwise."""
+    with fitz.open() as doc:
+        detections = _detect(_synthetic_page(doc), None)
+    by_mark = {d["normalized_mark"]: d for d in detections}
+    assert by_mark["H2"]["anchor_bolt"] == ""
+    assert by_mark["H2"]["schedule_source"] == "schedule_not_parsed"
+
+
+def test_madera_profile_opt_in_still_gets_the_default_schedule_and_says_so(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With the madera profile active, schedule=None may use the frozen
+    defaults — and it is labelled as such, never passed off as detected."""
+    import app.profile as profile_mod
+    monkeypatch.setattr(profile_mod, "detection_profile", lambda: "madera")
     with fitz.open() as doc:
         detections = _detect(_synthetic_page(doc), None)
     by_mark = {d["normalized_mark"]: d for d in detections}
@@ -74,9 +90,10 @@ def test_detected_schedule_rows_are_labelled_detected() -> None:
     by_mark = {d["normalized_mark"]: d for d in detections}
     assert by_mark["H1"]["anchor_bolt"] == '1/2"'
     assert by_mark["H1"]["schedule_source"] == "detected"
-    # A mark the read schedule does not cover still falls back on the legacy
-    # path, but is never passed off as read from the drawing.
-    assert by_mark["H2"]["schedule_source"] == "default_madera"
+    # A mark the read schedule does not cover is honestly labelled — never
+    # passed off as read from the drawing, never given fabricated defaults.
+    assert by_mark["H2"]["schedule_source"] == "not_in_schedule"
+    assert by_mark["H2"]["anchor_bolt"] == ""
 
 
 # ---------------------------------------------------------------------------

@@ -125,7 +125,7 @@ def save_revit_control_points(payload: dict[str, Any]) -> None:
 # PDF control points (persisted manual entry)
 # ---------------------------------------------------------------------------
 def empty_pdf_control_points(
-    sheet_number: str = "S-201", page_index: int | None = None
+    sheet_number: str | None = None, page_index: int | None = None
 ) -> dict[str, Any]:
     return {
         "schema_version": SCHEMA_PDF_CP,
@@ -153,7 +153,7 @@ def load_or_init_pdf_control_points() -> dict[str, Any]:
 
 def save_pdf_control_points(
     points: list[dict[str, Any]] | None,
-    sheet_number: str = "S-201",
+    sheet_number: str | None = None,
     page_index: int | None = None,
 ) -> dict[str, Any]:
     cleaned: list[dict[str, Any]] = []

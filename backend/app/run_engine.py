@@ -1,0 +1,237 @@
+"""Background pipeline runner with persisted run state and duplicate-run lock.
+
+One run per project at a time. Run state lives in ``run_state.json`` in the
+workspace so a browser refresh / disconnect never loses it. SSE events are
+emitted via progress.py for every stage transition (start/done/error/skip).
+
+ponytail: in-memory lock + persisted in-flight flag, no DB, single user.
+"""
+from __future__ import annotations
+
+import json
+import threading
+import time
+import traceback
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from . import config, progress, stage_graph
+
+
+# ---------------------------------------------------------------------------
+# In-memory lock registry (per project) so concurrent requests can't clash.
+# ---------------------------------------------------------------------------
+_RUN_LOCKS: dict[str, threading.Lock] = {}
+_ACTIVE_THREADS: dict[str, threading.Thread] = {}
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _run_state_path() -> Path:
+    return config.artifact_path("project_manifest").parent / "run_state.json"
+
+
+def _read_state() -> dict[str, Any] | None:
+    p = _run_state_path()
+    if not p.exists():
+        return None
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None  # torn file on crash — treat as absent
+
+
+def _write_state(state: dict[str, Any]) -> None:
+    p = _run_state_path()
+    tmp = p.with_suffix(".tmp")
+    tmp.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    tmp.replace(p)
+
+
+def run_state() -> dict[str, Any] | None:
+    """Current/last persisted run state for the bound project."""
+    return _read_state()
+
+
+def start_run(*, force: bool = False) -> dict[str, Any]:
+    """Begin a new pipeline run in a background thread. Returns the initial
+    run-state payload (202) or raises HTTPException(409) if a run is already
+    in flight for this project.
+
+    The caller must have already bound the project via ContextVar.
+    """
+    slug = config._PROJECT_SLUG.get()
+    if not slug:
+        raise RuntimeError("No project bound — call inside a request or bind_project()")
+
+    # Check persisted in-flight
+    existing = _read_state()
+    if existing and existing.get("status") == "running":
+        # If the thread died (server restart), mark it stale
+        alive = slug in _ACTIVE_THREADS and _ACTIVE_THREADS[slug].is_alive()
+        if alive:
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=409,
+                detail={"message": "A run is already in progress for this project.",
+                        "run_id": existing["run_id"]})
+        # Stale run — mark failed so a new one can start
+        existing["status"] = "failed"
+        existing["completed_at"] = _now_iso()
+        if not existing.get("error"):
+            existing["error"] = "Server restarted while run was in flight."
+        _write_state(existing)
+
+    if force and existing:
+        # Force: invalidate ALL stage outputs so nothing is stale
+        for key, _title, _prereqs, output in stage_graph.STAGES:
+            p = config.artifact_path(output)
+            if p.exists():
+                try:
+                    p.unlink()
+                except OSError:
+                    pass
+
+    run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+    initial = {
+        "run_id": run_id,
+        "project": slug,
+        "status": "running",
+        "started_at": _now_iso(),
+        "completed_at": None,
+        "force": force,
+        "stages": stage_graph.stages_payload(),
+        "error": None,
+        "next_action": {"kind": "in_progress", "message": "Pipeline starting…"},
+    }
+    _write_state(initial)
+
+    # Spawn background runner
+    lock = _RUN_LOCKS.setdefault(slug, threading.Lock())
+    t = threading.Thread(target=_run_in_thread, args=(slug, run_id, lock, force), daemon=True)
+    _RUN_LOCKS[slug] = lock  # keep ref
+    _ACTIVE_THREADS[slug] = t
+    t.start()
+
+    return initial
+
+
+def _run_in_thread(slug: str, run_id: str, lock: threading.Lock, force: bool) -> None:
+    """Execute all runnable stages in dependency order, persisting state + SSE."""
+    from .routers import pipeline as _pipe_router
+    from .routers import registration as _reg_router
+    import asyncio as _asyncio
+
+    try:
+        config._PROJECT_SLUG.set(slug)
+        state = _read_state()
+        if not state or state.get("run_id") != run_id:
+            return  # superseded
+
+        stage_map = {s["key"]: s for s in state["stages"]}
+
+        for key, title, prereqs, output_artifact in stage_graph.STAGES:
+            # Re-read state in case external changes invalidated
+            state = _read_state()
+            if not state or state.get("status") != "running":
+                break
+            si = state["stages"][next(i for i, s in enumerate(state["stages"]) if s["key"] == key)]
+
+            if stage_graph.artifact_present((output_artifact,)):
+                si["status"] = "done"
+                si["reason"] = "already run"
+                progress.emit(key, "skip", f"{title} — already run")
+                _write_state(state)
+                continue
+
+            if not stage_graph.artifact_present(prereqs):
+                si["status"] = "skipped"
+                si["reason"] = f"waiting on: {', '.join(prereqs) or 'PDF upload'}"
+                progress.emit(key, "skip", f"{title} — {si['reason']}")
+                _write_state(state)
+                continue
+
+            si["status"] = "running"
+            si["started_at"] = _now_iso()
+            progress.emit(key, "start", f"{title} started")
+            _write_state(state)
+
+            start = time.monotonic()
+            try:
+                _exec_stage(key)
+                dur = round(time.monotonic() - start, 1)
+                si["status"] = "done"
+                si["duration_s"] = dur
+                progress.emit(key, "done", f"{title} complete ({dur}s)")
+            except Exception as exc:  # noqa: BLE001
+                from fastapi import HTTPException
+                dur = round(time.monotonic() - start, 1)
+                if isinstance(exc, HTTPException) and exc.status_code in (404, 409):
+                    # Missing input = skip, not failure — the run isn't broken,
+                    # the project just isn't ready for this stage yet.
+                    si["status"] = "skipped"
+                    si["reason"] = exc.detail if isinstance(exc.detail, str) else "input missing"
+                    progress.emit(key, "skip", f"{title} — {si['reason']}")
+                else:
+                    si["status"] = "failed"
+                    si["error"] = f"{type(exc).__name__}: {exc}"
+                    si["duration_s"] = dur
+                    progress.emit(key, "error", f"{title} failed — {si['error']}")
+                    # Invalidate downstream — this stage failed, its output is junk
+                    stage_graph.invalidate_downstream(key)
+            si["completed_at"] = _now_iso()
+            _write_state(state)
+
+        # Post-run: set completion + next_action
+        state = _read_state()
+        if state and state.get("status") == "running":
+            state["status"] = "completed"
+            state["completed_at"] = _now_iso()
+            if stage_graph.artifact_present(("element_list",)):
+                state["next_action"] = {"kind": "review", "message": "QA/QC complete — review the results."}
+            elif not stage_graph.artifact_present(("raw_revit",)):
+                state["next_action"] = {"kind": "upload_revit", "message": "Export + upload the Revit JSON."}
+            else:
+                failed = any(s["status"] == "failed" for s in state["stages"])
+                state["next_action"] = {"kind": "retry" if failed else "review",
+                                        "message": "Some steps failed — retry." if failed else "QA/QC complete."}
+            _write_state(state)
+    except Exception as exc:  # noqa: BLE001
+        state = _read_state()
+        if state:
+            state["status"] = "failed"
+            state["error"] = f"{type(exc).__name__}: {exc}"
+            state["completed_at"] = _now_iso()
+            _write_state(state)
+        progress.emit("run", "error", f"Pipeline runner crashed: {exc}")
+    finally:
+        _ACTIVE_THREADS.pop(slug, None)
+
+
+def _exec_stage(key: str) -> None:
+    """Call the existing handler function for one stage (must be inside
+    a bound project context). Reuses the same handlers as the old
+    pipeline_run — these are the single-step POST endpoint functions."""
+    from .routers import pipeline as _r
+    from .routers import registration as _reg
+    import asyncio
+
+    if key == "extract":
+        _r.elements_extract()
+    elif key == "revit_convert":
+        asyncio.run(_r.revit_ai_convert(use_saved=True))
+    elif key == "pdf_intelligence":
+        _r.pdf_page_intelligence(use_saved=True)  # sync (def) — runs in bg thread
+    elif key == "pdf_convert":
+        _r.pdf_ai_convert()
+    elif key == "ransac":
+        _reg.registration_auto_holdown()
+    elif key == "compare":
+        _r.compare_ai()
+    elif key == "match":
+        _r.elements_match()
+    else:
+        raise ValueError(f"unknown stage {key}")

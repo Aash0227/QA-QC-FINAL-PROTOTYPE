@@ -20,7 +20,24 @@ ARTIFACT_BASE = PROJECT_ROOT / "artifacts"
 PROJECTS_DIR = ARTIFACT_BASE / "projects"
 MEMORY_DIR = ARTIFACT_BASE / "memory"
 ACTIVE_PROJECT_FILE = ARTIFACT_BASE / "active_project.json"
-FRONTEND_DIR = PROJECT_ROOT / "frontend"
+
+# The UI is served from the Vite build when one exists, and from the raw source
+# tree when it does not. The fallback is the rollback plan: if a build is
+# skipped, stale or broken, deleting frontend/dist restores the pre-bundler
+# behaviour with no code change. Source mode needs no npm, but it also cannot
+# resolve the bare "three"/"gsap" imports, so treat it as a dev/debug escape
+# hatch rather than a supported shipping mode.
+_FRONTEND_SRC = PROJECT_ROOT / "frontend"
+_FRONTEND_BUILT = _FRONTEND_SRC / "dist"
+
+
+def frontend_dir() -> Path:
+    """Resolved at call time so a build landing after boot is picked up on the
+    next restart without editing this module."""
+    return _FRONTEND_BUILT if (_FRONTEND_BUILT / "index.html").exists() else _FRONTEND_SRC
+
+
+FRONTEND_DIR = frontend_dir()
 
 # Project-scoped dirs are request-scoped via a ContextVar (BUG-03, full fix).
 # ARTIFACT_DIR / EVIDENCE_DIR / UPLOAD_DIR / PAGES_DIR are NOT real module
@@ -157,10 +174,10 @@ ARTIFACT_FILES = {
     "pdf_control_points": "pdf_control_points.json",
     "manual_registration_points": "manual_registration_points.json",
     "revit_scope_diagnostics": "revit_scope_diagnostics.json",
-    "review_page": "s201_review_page.png",
-    "review_overlay_png": "s201_review_overlay.png",
-    "review_overlay_svg": "s201_review_overlay.svg",
-    "review_items": "s201_review_items.json",
+    "review_page": "review_page.png",
+    "review_overlay_png": "review_overlay.png",
+    "review_overlay_svg": "review_overlay.svg",
+    "review_items": "review_items.json",
     # Generalized multi-element pipeline (any PDF + Revit export).
     "project_manifest": "project_manifest.json",
     "element_intelligence": "element_intelligence.json",

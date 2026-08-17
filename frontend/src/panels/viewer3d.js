@@ -3,6 +3,7 @@
 
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import gsap from "gsap";
 import { $, COL, toast, reduceMotion } from "../util.js";
 import { store, select, subscribe } from "../store.js";
 import { api } from "../api.js";
@@ -11,13 +12,12 @@ import { openDrawer } from "./inspector.js";
 
 let three = null;
 
-/* Hybrid load: the export SNAPSHOT renders immediately (fast, always there),
-   then the LIVE model is fetched in the background and swapped in when Revit
-   answers. Live-first would block the pane on a Nonica round trip that can
-   take tens of seconds — or never come. */
+/* Export SNAPSHOT renders on load (fast, always there). The LIVE model is
+   fetched only when the operator presses "⟳ Refresh from Revit" — live-first
+   would block the pane on a Nonica round trip that can take tens of seconds,
+   and paying it on every page load was pure waste. */
 export async function loadScene() {
   try { store.scene = await api("/api/scene3d"); build3D(); } catch { }
-  loadLiveScene(false);
 }
 
 const LIVE_COL = { walls: "#8fa3bd", columns: "#64748b", connections: "#38bdf8" };

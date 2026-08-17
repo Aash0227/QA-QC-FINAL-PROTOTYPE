@@ -5,6 +5,7 @@
    bot's ui_actions (select an element so all panes fly to it, apply a filter,
    open a view). Teaching now happens conversationally via save_teach_rule. */
 
+import gsap from "gsap";
 import { $, esc, COL, toast } from "../util.js";
 import { store, select } from "../store.js";
 import { api } from "../api.js";
@@ -19,7 +20,7 @@ function bubble(who, html) {
   d.className = `msg ${who}`;
   d.innerHTML = html;
   $("#chat-log").appendChild(d);
-  if (window.gsap) gsap.from(d, { y: 10, opacity: 0, duration: .3 });
+  gsap.from(d, { y: 10, opacity: 0, duration: .3 });
   d.scrollIntoView({ block: "nearest", behavior: "smooth" });
   return d;
 }
@@ -154,7 +155,7 @@ export function initChat() {
   started = true;
   bubble("ai",
     `Hi — I'm the QA-QC copilot. Ask me things like "how many holdowns?",
-     "what's PDF only on S-201?", or "highlight H2". I can re-run extract/match/
+     "what's PDF-only on the foundation plan?", or "highlight H2". I can re-run extract/match/
      compare and remember client conventions ("HD3 means H3").`);
   loadUnknownCard();
 }

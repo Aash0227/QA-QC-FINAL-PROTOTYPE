@@ -5,6 +5,7 @@
    ponytail: the drawers share one module — one UI region (the drawer slot),
    one open/close manager. */
 
+import gsap from "gsap";
 import { $, esc, COL, CAT_LABEL, RUN_STATUSES, toast, reduceMotion } from "../util.js";
 import { store, select, subscribe } from "../store.js";
 import { api } from "../api.js";
@@ -12,22 +13,53 @@ import { loadAll } from "../app.js";
 import { initChat } from "./chat.js";
 import { showInRevitBtn, whyBlock, wireRevitLive, initRevitLookup } from "./revit_live.js";
 
-/* ---------------- drawer manager ---------------- */
+/* ---------------- drawer manager ----------------
+   Drawers are NOT modal: the panes behind stay live and readable, which is the
+   whole point of having the drawing on screen while you judge a mismatch. So
+   they get focus *management* (move in on open, hand back on close) rather than
+   a focus trap — trapping would fight the deliberate drawer/wizard coexistence
+   the smoke suite pins. Closed drawers are visibility:hidden, so they are
+   already out of the tab order and the accessibility tree. */
+const DRAWERS = ["inspector", "chat", "review", "runs", "revitlookup"];
+let drawerReturnFocus = null;
+
+function focusInto(id) {
+  const el = $("#" + id);
+  // The first thing you would reach for: an input if there is one, else the
+  // close button. Never the drawer container — a focused div announces nothing.
+  const target = el.querySelector("input:not([type=hidden]), textarea, select")
+    || el.querySelector("button");
+  target?.focus({ preventScroll: true });
+}
+
 export function openDrawer(name) {
+  const opening = name && store.drawer !== name;
+  if (opening) drawerReturnFocus = document.activeElement;
   store.drawer = name;
-  $("#inspector").classList.toggle("open", name === "inspector");
-  $("#chat").classList.toggle("open", name === "chat");
-  $("#review").classList.toggle("open", name === "review");
-  $("#runs").classList.toggle("open", name === "runs");
-  $("#revitlookup").classList.toggle("open", name === "revitlookup");
+  for (const d of DRAWERS) {
+    const el = $("#" + d);
+    const on = d === name;
+    el.classList.toggle("open", on);
+    el.setAttribute("aria-hidden", String(!on));
+  }
   if (name === "chat") initChat();
   if (name === "review") initReview();
   if (name === "runs") initRuns();
   if (name === "revitlookup") initRevitLookup();
+  if (opening) focusInto(name);
+  // Closing via this path (openDrawer(null)) hands focus back to whatever
+  // opened the drawer, so keyboard users are not dumped at the top of the page.
+  if (!name) { drawerReturnFocus?.focus?.(); drawerReturnFocus = null; }
 }
+
 document.querySelectorAll("[data-close]").forEach(b => b.onclick = () => {
-  $("#" + b.dataset.close).classList.remove("open");
-  if (store.drawer === b.dataset.close) store.drawer = null;
+  const id = b.dataset.close;
+  const el = $("#" + id);
+  el.classList.remove("open");
+  el.setAttribute("aria-hidden", "true");
+  if (store.drawer === id) store.drawer = null;
+  drawerReturnFocus?.focus?.();
+  drawerReturnFocus = null;
 });
 $("#btn-chat").onclick = () => openDrawer(store.drawer === "chat" ? null : "chat");
 $("#btn-runs").onclick = () => openDrawer(store.drawer === "runs" ? null : "runs");
@@ -174,8 +206,19 @@ function setRevCount(n) {
 }
 
 let revQueue = null, revCurrent = null;
+/* One shared queue fetch: the boot badge and a drawer opened right after boot
+   reuse the same in-flight/very-recent request instead of hitting
+   /api/review/queue twice. Older than 10 s = refetch, so the drawer never
+   serves stale queue state. */
+let revQP = null, revQAt = 0;
+function fetchQueue() {
+  if (revQP && Date.now() - revQAt < 10000) return revQP;
+  revQAt = Date.now();
+  revQP = api("/api/review/queue").catch(e => { revQP = null; throw e; });
+  return revQP;
+}
 async function initReview() {
-  try { revQueue = await api("/api/review/queue"); }
+  try { revQueue = await fetchQueue(); }
   catch (e) { $("#rev-list").innerHTML = `<span style="color:var(--dim)">${e.message}</span>`; return; }
   $("#rev-progress").textContent = `${revQueue.reviewed} of ${revQueue.total} reviewed`;
   setRevCount(revQueue.total - revQueue.reviewed);
@@ -295,9 +338,10 @@ async function sendReviewComment() {
 }
 $("#rev-send").onclick = sendReviewComment;
 $("#rev-comment").addEventListener("keydown", ev => { if (ev.key === "Enter") sendReviewComment(); });
-// review badge on load
+// review badge on load — shares fetchQueue() with initReview so a boot that
+// is followed by opening the review drawer does NOT hit the queue twice.
 (async () => {
-  try { const q = await api("/api/review/queue"); setRevCount(q.total - q.reviewed); } catch { }
+  try { const q = await fetchQueue(); setRevCount(q.total - q.reviewed); } catch { }
 })();
 
 /* ---------------- selection reaction ---------------- */

@@ -164,7 +164,7 @@ def build_review_items(
         "page": {
             "w": page_w,
             "h": page_h,
-            "image_png": "s201_review_page.png",
+            "image_png": "review_page.png",
             "dpi": RENDER_DPI,
         },
         "counts": counts,
@@ -351,15 +351,17 @@ def build_and_save(
     Full orchestrator: render page, build items, build SVG, render annotated PNG.
     
     Writes:
-    - s201_review_page.png
-    - s201_review_overlay.svg
-    - s201_review_overlay.png
-    - s201_review_items.json
+    - review_page.png
+    - review_overlay.svg
+    - review_overlay.png
+    - review_items.json
     
     Returns items dict.
     """
+    # ponytail: filenames below duplicate config.ARTIFACT_FILES["review_*"] —
+    # if they drift the served artifacts 404. Sync manually or import config.
     # 1. Render page PNG
-    page_png = artifact_dir / "s201_review_page.png"
+    page_png = artifact_dir / "review_page.png"
     page_png, w, h = render_s201_page_png(pdf_path, page_index, page_png)
     
     # 2. Build review items
@@ -369,15 +371,15 @@ def build_and_save(
     
     # 3. Build SVG (no MATCH by default)
     svg_content = build_overlay_svg(items_payload, show_match=False)
-    svg_path = artifact_dir / "s201_review_overlay.svg"
+    svg_path = artifact_dir / "review_overlay.svg"
     svg_path.write_text(svg_content, encoding="utf-8")
     
     # 4. Render annotated PNG (no MATCH by default)
-    overlay_png = artifact_dir / "s201_review_overlay.png"
+    overlay_png = artifact_dir / "review_overlay.png"
     render_annotated_png(page_png, items_payload, overlay_png, show_match=False)
     
     # 5. Write items JSON
-    items_json = artifact_dir / "s201_review_items.json"
+    items_json = artifact_dir / "review_items.json"
     items_json.write_text(json.dumps(items_payload, indent=2), encoding="utf-8")
     
     return items_payload

@@ -86,8 +86,11 @@ def _live_lookup(center: dict[str, Any], radius_ft: float) -> dict[str, Any]:
 @router.get("/api/revit/status")
 def revit_status() -> dict[str, Any]:
     """Live Nonica/Revit connection status for the wizard (production-plan §2).
-    Never raises — connector-off reads as disconnected."""
-    return revit_bridge.status()
+    Never raises — connector-off reads as disconnected. Cached variant: the UI
+    polls this endpoint, and every uncached call spawns the MCP exe (~14 s
+    handshake even to learn Revit is closed) — status_cached holds the answer
+    30 s connected / 300 s offline (force=True is the operator's Refresh)."""
+    return revit_bridge.status_cached()
 
 
 # ---------------------------------------------------------------------------

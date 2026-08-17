@@ -141,10 +141,14 @@ def create_app() -> FastAPI:
                    workflow, revit, chat):
         app.include_router(module.router)
 
-    # Frontend mounted last so /api/* wins.
-    if config.FRONTEND_DIR.exists():
-        app.mount("/", StaticFiles(directory=str(config.FRONTEND_DIR), html=True),
-                  name="frontend")
+    # Frontend mounted last so /api/* wins. Resolved here rather than read off
+    # the import-time constant so a build that lands between import and boot
+    # (uvicorn --reload, or the installer building after unpack) is picked up.
+    ui_dir = config.frontend_dir()
+    if ui_dir.exists():
+        logger.info("serving frontend from %s (%s)", ui_dir,
+                    "vite build" if ui_dir.name == "dist" else "source, unbundled")
+        app.mount("/", StaticFiles(directory=str(ui_dir), html=True), name="frontend")
     return app
 
 

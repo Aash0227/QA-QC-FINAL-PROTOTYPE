@@ -11,7 +11,15 @@ const BASE = `http://127.0.0.1:${PORT}`;
 
 export default defineConfig({
   testDir: "./tests",
-  timeout: 30_000,
+  // Builds frontend/dist before the backend boots, so the suite always exercises
+  // the working tree rather than a stale bundle. QAQC_SKIP_BUILD=1 opts out.
+  globalSetup: "./tests/global-setup.js",
+  // 30s was sized for the Madera sample. A full permit set (100+ pages, a 3D
+  // scene and a few hundred elements) can take 15-20s just to reach first
+  // interaction, which left real assertions racing the test budget and failing
+  // as timeouts. The per-assertion expect timeout below is unchanged, so a
+  // genuinely broken UI still fails in 10s — only startup gets the extra room.
+  timeout: 60_000,
   expect: { timeout: 10_000 },
   fullyParallel: false,
   workers: 1,

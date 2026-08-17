@@ -1,6 +1,7 @@
 /* panels/pdf.js — drawing (PDF) pane: tabs, pan/zoom, overlay, measure,
    layers, benchmark markers. Reacts to the store's "select" event. */
 
+import gsap from "gsap";
 import { $, esc, COL, BENCHMARK_COLOR } from "../util.js";
 import { store, select, subscribe } from "../store.js";
 import { api } from "../api.js";

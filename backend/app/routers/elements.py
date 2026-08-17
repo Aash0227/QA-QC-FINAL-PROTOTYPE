@@ -60,16 +60,20 @@ def devices_get() -> JSONResponse:
 @router.get("/api/scene3d")
 def scene3d_get() -> JSONResponse:
     path = config.artifact_path("scene3d")
-    if not path.exists():
-        raw_revit = load_artifact("raw_revit")
-        ai_path = config.artifact_path("ai_revit")
-        ai_revit = json.loads(ai_path.read_text(encoding="utf-8")) if ai_path.exists() else None
-        el_path = config.artifact_path("element_list")
-        element_list = (
-            json.loads(el_path.read_text(encoding="utf-8")) if el_path.exists() else None
-        )
-        save_artifact("scene3d", scene3d.build_scene(raw_revit, element_list, ai_revit))
-    return JSONResponse(json.loads(path.read_text(encoding="utf-8")))
+    if path.exists():
+        # Cached file is served as-is — raw_revit (15-28MB) is only parsed when
+        # the scene actually needs building.
+        return JSONResponse(load_artifact("scene3d"))
+    raw_revit = load_artifact("raw_revit")
+    ai_path = config.artifact_path("ai_revit")
+    ai_revit = json.loads(ai_path.read_text(encoding="utf-8")) if ai_path.exists() else None
+    el_path = config.artifact_path("element_list")
+    element_list = (
+        json.loads(el_path.read_text(encoding="utf-8")) if el_path.exists() else None
+    )
+    scene = scene3d.build_scene(raw_revit, element_list, ai_revit)
+    save_artifact("scene3d", scene)
+    return JSONResponse(scene)
 
 
 @router.get("/api/sheets/{sheet}/page.png")
@@ -119,7 +123,13 @@ def review_build() -> JSONResponse:
     page_intel = load_artifact("pdf_page_intelligence")
 
     # Get page index and source PDF from page intelligence
-    page_index = page_intel.get("page_index", 4)
+    page_index = page_intel.get("page_index")
+    if page_index is None:
+        raise HTTPException(
+            status_code=409,
+            detail="pdf_page_intelligence.json is missing 'page_index'. "
+                   "Run /api/pdf/page-intelligence first.",
+        )
     source_file = page_intel.get("source_file")
     if not source_file:
         raise HTTPException(
@@ -151,9 +161,9 @@ def review_items_get() -> JSONResponse:
         # Try building it
         compare_report = load_artifact("compare")
         page_intel = load_artifact("pdf_page_intelligence")
-        page_index = page_intel.get("page_index", 4)
+        page_index = page_intel.get("page_index")
         source_file = page_intel.get("source_file")
-        if source_file:
+        if page_index is not None and source_file:
             pdf_path = contained_project_pdf(source_file)
             if pdf_path.exists():
                 review_overlay.build_and_save(

@@ -8,6 +8,8 @@ through this one place (BUG-03)."""
 
 from __future__ import annotations
 
+import copy
+import functools
 import json
 import os
 from pathlib import Path
@@ -55,21 +57,39 @@ def make_router() -> APIRouter:
 
 
 def save_artifact(key: str, data: dict[str, Any]) -> Path:
+    """Atomic write: temp file in the same dir, then os.replace, so a
+    concurrent reader sees either the old artifact or the new one — never a
+    torn half-write. Same-volume rename, so os.replace is atomic."""
     path = config.artifact_path(key)
-    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    os.replace(tmp, path)
+    _read_artifact.cache_clear()
     return path
+
+
+@functools.lru_cache(maxsize=16)
+def _read_artifact(path_str: str, mtime_ns: int) -> dict[str, Any]:
+    """Parsed artifact keyed by (resolved path, mtime_ns): a write by ANY
+    writer changes the mtime, so stale entries self-invalidate; save_artifact
+    also clears the cache outright (maxsize 16, cheap). Callers mutate the
+    result (review resolve) — load_artifact hands out copies, never the
+    cached object. Exceptions are not cached, so a torn read still 409s."""
+    return json.loads(Path(path_str).read_text(encoding="utf-8"))
 
 
 def load_artifact(key: str) -> dict[str, Any]:
     path = config.artifact_path(key)
-    if not path.exists():
+    try:
+        st = path.stat()
+    except FileNotFoundError:
         raise HTTPException(
             status_code=409,
             detail=f"Required artifact '{config.ARTIFACT_FILES[key]}' not found. "
             "Run the prerequisite step first.",
         )
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        return copy.deepcopy(_read_artifact(str(path), st.st_mtime_ns))
     except json.JSONDecodeError as exc:
         # A torn or truncated write is not a server bug — tell the caller which
         # artifact to regenerate instead of 500ing on eleven endpoints.

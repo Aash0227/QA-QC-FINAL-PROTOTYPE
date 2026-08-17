@@ -1,5 +1,7 @@
 /* util.js — DOM helpers, escaping, toasts, and the app-wide constants.
-   Shared by every panel; imports nothing (leaf module). */
+   Shared by every panel; imports nothing but gsap (leaf module). */
+
+import gsap from "gsap";
 
 export const $ = s => document.querySelector(s);
 export const esc = s => String(s ?? "").replace(/[&<>"']/g,
@@ -26,6 +28,20 @@ export const COL = {
   REVIT_ONLY: "#ef4444", NEEDS_REVIEW: "#a78bfa", NO_REVIT_DATA: "#94a3b8",
   NOT_IN_SCHEDULE: "#e879f9", NOT_EVALUATED: "#475569", SPEC_ONLY: "#64748b",
 };
+/* A glyph per status, so a verdict is never conveyed by colour alone (UI plan
+   §4). Rows already carry the status as text; these cover the places that only
+   had a coloured dot — the category/mark count bars. Chosen to be legible at
+   9px and to survive a monochrome print of a punch list. */
+export const GLYPH = {
+  MATCH: "✓", LOCATION_MISMATCH: "↔", MARK_MISMATCH: "≠", PDF_ONLY: "P",
+  REVIT_ONLY: "R", NEEDS_REVIEW: "?", NO_REVIT_DATA: "–",
+  NOT_IN_SCHEDULE: "!", NOT_EVALUATED: "·", SPEC_ONLY: "S",
+};
+
+/* "LOCATION_MISMATCH" -> "location mismatch". Used wherever a status is shown
+   to a human; the raw token stays the value we compare on. */
+export const statusLabel = s => String(s ?? "").replaceAll("_", " ").toLowerCase();
+
 export const CATS = ["holdown", "shear_wall", "post", "steel_column", "wall_type"];
 export const CAT_LABEL = { holdown: "Hold-downs", shear_wall: "Shear walls", post: "Posts", steel_column: "Steel columns", wall_type: "Wall types" };
 export const DEFAULT_LAYERS = new Set(Object.keys(COL).filter(s => s !== "NOT_EVALUATED" && s !== "SPEC_ONLY"));

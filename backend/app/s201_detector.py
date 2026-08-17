@@ -101,6 +101,18 @@ DEFAULT_HOLDOWN_SCHEDULE = {
 }
 
 
+def _madera_profile_active() -> bool:
+    """Opt-in gate (see app/profile.py): the frozen Madera defaults below may
+    only be used when the active project's manifest declares
+    detection_profile == 'madera'. Generic callers never see them."""
+    try:
+        from . import profile
+
+        return profile.detection_profile() == "madera"
+    except Exception:
+        return False
+
+
 @dataclass(frozen=True)
 class LineSegment:
     a: tuple[float, float]
@@ -215,12 +227,20 @@ def detect_holdowns_on_page(
     table_bboxes: list[BBox] | None = None,
     plan_bbox: BBox | None = None,
 ) -> list[dict[str, Any]]:
-    # An explicitly-passed empty schedule means "this project has no schedule data"
-    # (generic path) — never substitute Madera's defaults there. Only None/absent
-    # (the legacy S-201 path) falls back.
+    # schedule=None means "no schedule could be parsed" (the legacy S-201 path);
+    # an explicitly-passed empty dict means "this project has no schedule data"
+    # (generic path). Neither may silently substitute Madera's defaults: the
+    # frozen DEFAULT_HOLDOWN_SCHEDULE stands in only behind the opt-in madera
+    # detection profile; everyone else gets honest empty schedule data flagged
+    # 'schedule_not_parsed' instead of manufactured rows.
     schedule_is_default = schedule is None
+    schedule_not_parsed = False
     if schedule_is_default:
-        schedule = DEFAULT_HOLDOWN_SCHEDULE
+        if _madera_profile_active():
+            schedule = dict(DEFAULT_HOLDOWN_SCHEDULE)
+        else:
+            schedule = {}
+            schedule_not_parsed = True
     words = page.get_text("words")
     if table_bboxes is None:
         table_bboxes = _table_bboxes(page)
@@ -240,17 +260,26 @@ def detect_holdowns_on_page(
         total = max(int(hit["count"]), len(points))
         points = _normalize_instance_count(points, source_bbox, total)
         location_evidence = _location_evidence(plan, total)
-        if not schedule:
+        if schedule_not_parsed:
+            sched, sched_source = {}, "schedule_not_parsed"
+        elif not schedule:
             sched, sched_source = {}, "none"
         else:
-            sched = schedule.get(label)
-            if sched is None:
-                sched, sched_source = DEFAULT_HOLDOWN_SCHEDULE.get(label, {}), "default_madera"
-            else:
+            sched = schedule.get(label, {})
+            if sched:
                 sched_source = "default_madera" if schedule_is_default else "detected"
+            else:
+                # mark absent from the read schedule — say so, never claim it
+                # was detected nor substitute defaults.
+                sched_source = "not_in_schedule"
 
         for instance_index, point in enumerate(points, start=1):
-            det_id = f"{sheet_number.lower()}_{label.lower()}_{hit_index:03d}_{instance_index}"
+            # ponytail: sheet_number may be None when no sheet pattern was
+            # found on the page (pdf_intelligence._detect_sheet_number) —
+            # neutral id prefix instead of crashing; upgrade if ids become
+            # a parseable contract for the frontend.
+            sheet_tag = str(sheet_number or "sheet").lower()
+            det_id = f"{sheet_tag}_{label.lower()}_{hit_index:03d}_{instance_index}"
             crop_url = ""
             if evidence_dir is not None:
                 crop_name = f"{det_id}.png"
@@ -352,9 +381,14 @@ def _detection_to_entity(*, project_id: str, detection: dict[str, Any]) -> dict[
     }
 
 
-def _extract_holdown_schedule(page: fitz.Page) -> dict[str, dict[str, str]]:
+def _extract_holdown_schedule(page: fitz.Page) -> dict[str, dict[str, str]] | None:
+    """Parse the schedule table. None when it could not be parsed — callers
+    must not manufacture rows: the frozen DEFAULT_HOLDOWN_SCHEDULE stands in
+    only behind the opt-in madera detection profile."""
     rows = _extract_holdown_schedule_from_words(page)
-    return rows or DEFAULT_HOLDOWN_SCHEDULE
+    if rows:
+        return rows
+    return dict(DEFAULT_HOLDOWN_SCHEDULE) if _madera_profile_active() else None
 
 
 def _extract_holdown_schedule_from_words(page: fitz.Page) -> dict[str, dict[str, str]]:

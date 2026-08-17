@@ -1,298 +1,143 @@
-# AGENT HANDOFF — QA-QC prototype (updated 2026-07-17, benchmark-autopilot sprint)
+# AGENT_HANDOFF — Livio QA-QC (prototype repo)
 
-If you are a fresh agent picking this up: read this file top to bottom, then
-`backend/app/AUTOPILOT_PLAN.md` (the approved plan currently being implemented —
-P0/P1/P2/P3/P4 done as of 2026-07-17, see its "Progress" section for exact
-diffs and live-verification evidence; next in plan order: P7 (skill), then
-P5 (3D fidelity), then P6 (full restyle)).
-Older context: `docs/ACCURACY_100_PLAN.md` (the device-matching plan, now shipped).
-
-## Environment (non-negotiable)
-- Python: `C:\Users\aashd\AppData\Local\Programs\Python\Python311\python.exe`, run from `backend/` (module `app`).
-- Server: `python -m uvicorn app.main:app --host 127.0.0.1 --port 8077` (background). A browser tab may fire `POST /api/projects/activate` at any time — always re-activate your project before chained pipeline calls.
-- Tests: `python -m pytest -q` from backend/ (86 green as of handoff).
-- Frozen modules (do NOT edit): compare.py, registration.py math, s201_detector.py, pdf_intelligence.py, review_overlay.py, normalization.py, revit_convert.py, pdf_convert.py. No fake matches ever.
-- Frontend: single file `frontend/index.html` (+ keep `index_v3_backup.html` in sync).
-
-## Current sprint (user goal, active Stop-hook)
-1. **Implement `docs/ACCURACY_100_PLAN.md`** — physical-device matching:
-   new `backend/app/device_match.py` (P1 registry: inverse-project per-sheet
-   callouts to model ft, chirality-aware — see working math in
-   `scripts/holdown_dedup_probe.py`; P2 global 1:1 assignment in FEET:
-   MATCH ≤2ft, LOCATION_MISMATCH 2–6ft, MARK_MISMATCH same-place-different-mark,
-   REVIT_ONLY only when no callout anywhere; P3 device statuses re-applied to
-   element_list rows truthfully with device evidence in reason).
-   Then P5 same for shear walls (pt-to-segment vs SW wall centerlines).
-   Artifact: `device_registry.json`; endpoint GET /api/devices.
-2. **Test on Madera + Country Side**, produce before/after table (probe
-   ground truth: 122 holdown rows = 62 physical devices; 0 devices lack a
-   Revit partner within 6ft; expect ~40+ device MATCH, 0 phantom PDF_ONLY).
-3. **Human Review v2** — plan doc FIRST (`docs/HUMAN_REVIEW_V2_PLAN.md`), then:
-   AI-first deterministic analysis per LOCATION_MISMATCH (offset ft +
-   direction + systematic-shift detection), human comment → AI evaluates →
-   animated Accept/Reject → on Accept: status → MATCH (via:"human_review",
-   original distance retained), reflected in PDF overlay + 3D + punch list,
-   and a teach-memory rule saved. Never silently mutate: the audit trail
-   stays in review_comments.json.
-4. **Bug sweep**: reviewer subagents over backend + frontend, fix CRITICAL/HIGH.
-
-## Key facts discovered (do not re-derive)
-- PDF y is FLIPPED vs model y: any similarity fit must try both chiralities
-  (see `_fit_one(pairs, flip)` in scripts/holdown_dedup_probe.py).
-- Per-sheet calibrations: `registration_calibration.json` (S-201/global),
-  `registration_calibration_S-202.json`, `_S-205.json` in the project dir;
-  `point_pairs` hold revit_ft ↔ pdf_pt pairs.
-- Madera holdowns: 72 Revit assemblies (after the body-split fix in
-  revit_v3_adapter.build_ai_revit), 122 sheet callout rows, 62 physical.
-- Madera raw = `revit_export_enriched.json` (Downloads, built by
-  scripts/enrich_madera_export.py; v2-merge provenance-tagged).
-- Nonica Revit MCP: registered user-scope as "Revit"; use headless
-  `claude -p "..." --allowedTools "mcp__Revit__*"` (tools not in this session).
-  Live model must be open with A.I. Connector enabled.
-- Run baselines: `artifacts/projects/madera/run_baseline.json` (v2 run);
-  snapshot of entire old run at `artifacts/projects/madera_prev_v2_run/`.
-- ⚖ Runs drawer + /api/runs/compare show old-vs-new tables.
-
-## Status checkpoint (update this section as you work)
-- [x] Plan written (docs/ACCURACY_100_PLAN.md)
-- [x] device_match.py implemented (self-check green)
-- [x] Integrated into /api/elements/match + GET /api/devices
-- [x] Madera + Country Side results delivered (Madera 122 holdown rows -> 65
-      physical devices: 44 MATCH/16 LM/4 PDF_ONLY/1 MARK_MISMATCH/11 honest
-      REVIT_ONLY, 0 phantoms; overall MATCH 69->102->106 after review-accepts,
-      coverage 95%. Country Side 12->21. 86 pytest green.)
-- [x] Wall device matching (segment dist, absorb same-mark run segments,
-      gates 4/12 ft; SW-3/SW-4 = vocabulary gap, teachable)
-- [x] Human Review v2 plan doc + implementation, VERIFIED e2e
-      (s-201_h2_035_1: analysis -> human logic -> AI verdict -> accept ->
-      MATCH everywhere + audit block; persists across re-match, keyed
-      category:mark:target_id)
-- [x] Bug sweep fixed (XSS esc(), WebGL dispose+rAF cancel, filter desync,
-      v3 bypass in /api/revit/ai-convert, teach.py id max+1)
-- [x] Server verified running + dashboard screenshotted live (2026-07-15,
-      354 elements / 106 MATCH / 231 discrepancies, 3D + PDF + review OK)
-- [x] graphify knowledge graph built: graphify-out/graph.html + GRAPH_REPORT.md
-      (753 nodes, 1540 edges, 42 labeled communities)
-- [x] NEW_SESSION_PROMPT.md written (onboarding brief for any fresh agent)
-- [x] 2-BENCHMARK REGISTRATION COMPLETE (2026-07-16, docs/BENCHMARK-REGISTRATION-PLAN.md
-      A1-A7 all done): A1 registration.compute_calibration_from_benchmarks +
-      A2 benchmarks.extract_pdf_benchmarks (were already on disk);
-      config "pdf_benchmarks" artifact; A3 exporter collect_benchmarks()
-      (doc-wide, family~Benchmark OR Mark BM-\d) + core.is_benchmark() +
-      benchmarks passthrough in adapt_raw; A4 POST/GET /api/pdf/benchmarks +
-      POST /api/registration/benchmarks (saves ONLY when match_allowed —
-      never overwrites a working calibration with a failed solve; chirality
-      evidence = holdown clouds via ransac_holdown._gather); A5
-      tools/make_benchmark_stamp.py -> tools/stamps/BM-{1,2}.pdf (self-check:
-      vector pass finds own crosshair) + docs/BENCHMARK-SOP.md; A6 "4b ·
-      Benchmark calibration (2-point)" panel in Pipeline modal (backup
-      synced); A7 tests/test_benchmarks.py: 98 pytest green (86+12).
-      VERIFIED e2e via scratch project: stamped fixture PDF + synthetic
-      raw_revit benchmarks -> extract found BM-1/BM-2 -> calibrate saved=True
-      confidence=medium scale=18.0 drift=0.0% source=benchmark_verified;
-      unstamped Madera -> honest not-found + 409, existing holdown_ransac
-      calibration untouched.
-- [x] REAL ACCEPTANCE DONE (2026-07-16, live via Nonica MCP Pro trial):
-      placed mwfBenchmark copies in the LIVE Madera model (3951194=BM-1 at
-      grid A x 1, 3951193=BM-2 at grid C x 3, exact-vector copies of pinned
-      GM0 @1756546; readback-verified). Stamped the REAL permit PDF
-      (Downloads/...STAMPED_10510 Madera Dr-DWG-20260122-D1.pdf, backup
-      .pre_benchmarks.bak.pdf) with BM-1/BM-2 circle annots on S-201 p4 at
-      trusted-transform projections. Injected benchmarks into
-      raw_revit_export.json (backup kept). extract -> both found 0.98;
-      calibrate -> saved=true, benchmark_2pt scale 17.966403 rot 0.051163
-      offsets agree with holdown_ransac to ~1e-5 pt. Madera calibration is
-      now benchmark_verified. Runner: backend/run_benchmark_acceptance.py.
-      REMAINING: user saves/syncs the Revit model (copies are session-only
-      until saved) + next real export should show "Benchmarks: 2".
-- [x] FULL RE-MATCH UNDER benchmark_verified (2026-07-16 evening): compare/ai
-      + elements/match re-run with the benchmark calibration -> results
-      IDENTICAL to the holdown_ransac run (107 MATCH, holdown devices
-      44 M/16 LM/4 PO/1 MM/11 RO), proving the 2-benchmark transform is a
-      drop-in replacement (delta < 0.00002 pt). Two bugs fixed en route:
-      (1) compare.py:39 had a corrupted identifier "group. ed" (stray edit,
-      restored to "grouped" — pure repair, logic identical to _group_revit);
-      (2) main.py elements_match crashed with dict+list TypeError when
-      stored resolutions re-applied (registration_notes is a dict) — now
-      sets result["resolutions_reapplied"]=N instead. Server restarted with
-      fixed code; UI Match verified HTTP 200; 98 pytest green.
-
-## SHIP DAY (2026-07-28 — 279 pytest + 7 Playwright green, live-verified on Country Side)
-User workflow now: (1) upload PDF + Revit JSON — auto-benchmark proposes
-BM-1/BM-2 from the PDF's own grids and asks approval via banner; (2) open the
-same model in Revit with BOTH connectors on (Nonica A.I. Connector + revitMCP
-"Open Server"); (3) review in the webapp. 🤖 deterministic phase summaries
-appear in the pipeline log after every phase (phase_summary.py, SSE +
-phase_summaries.json replay).
-- **De-hardcoded** (HARDCODING_AUDIT.md): per-project pdf_baseline from each
-  project's own pdf_page_intelligence (surgical compare.py diagnostics edit,
-  invariance sha-proven on all 3 projects); QAQC_BENCHMARK_FAMILY env/payload
-  override + benchmark-family discovery suggestions; frontend primary-sheet
-  lookup via new GET /api/sheets/primary (no "S-201" literal);
-  GET /api/registration/sheet/{sheet} implemented (was phantom 404 — measure
-  scale was broken on every non-primary sheet); intelligence_source stamp.
-- **Live hybrid 3D**: GET /api/revit-live/scene + POST /api/revit-live/refresh-3d
-  (bbox massing via Nonica, 60s cache, capped at 3000/category with honest
-  truncation note); viewer3d.js renders snapshot instantly then swaps in LIVE
-  with badge + ⟳ live button. Country Side live: 499 walls/3000 framing/28
-  columns/1150 connections, 219 status-joined when its project is active.
-- **Flaw fixes**: R-03(safe/dormant) R-10 R-15 R-21 R-22 R-25 R-27 R-30 and
-  new R-35 (Revit modal dialog blocks tools → reads must error, not report
-  "nothing selected"; _looks_blocked in revit_bridge). See flaw report status
-  block for the honest STILL-OPEN list (mostly needs the pyRevit exporter).
-- **Country Side acceptance (all pass)**: correct model detected; live 3D ok;
-  Show-in-Revit on rev_asm_031 → live selection 0.003 ft; "Use current Revit
-  selection" via revit_mcp → full plain-English verdict; match deterministic
-  across 2 runs; runs-drawer per-device baseline works.
-- Docs: README/USER_GUIDE/LIVIO_TEAM_GUIDE rewritten for the 3-step workflow;
-  docs/CODEBASE_AUDIT_REPORT.md = senior-engineer line audit;
-  HARDCODING_AUDIT.md = triaged hardcode inventory.
-
-## REVIT-LIVE ROUND 2 (2026-07-27 late — all live-verified, 207 pytest + 7 Playwright green)
-- **"Show in Revit" bug ROOT-CAUSED + FIXED (R-34, new flaw)**: Nonica
-  compresses LARGE tool responses into subset lines
-  (`selected_ids[28]{SubsetId,IdsCount,SampleElementId}: -9000017,28,2804799`);
-  the parser read that as "selected none" even though selection succeeded.
-  `_subset_ids()` in revit_bridge.py handles subset form in select_elements +
-  get_selection; responses now carry `selected_count`. The frontend was NEVER
-  the bug — it already passed assembly_id.
-- **Open-source revit-mcp integrated** (`mcp-servers-for-revit`, add-in at
-  %APPDATA%\Autodesk\Revit\Addins\2023\revit_mcp_plugin\): its Node "server"
-  is a pure relay to a raw TCP socket at 127.0.0.1:8080 (REVIT_MCP_ADDR env
-  overrides) — backend talks to the socket directly, no node. 25 tools incl.
-  get_selected_elements (returns Id/UniqueId/Name/Category only — no point;
-  point comes from the Nonica coordinate cache). OPERATOR STEP: revitMCP
-  ribbon > "Open Server" must be clicked in Revit, else honest Nonica
-  fallback. New bridge fn get_selected_element_full(); new endpoint
-  GET /api/revit/selected-element (merged with _explain_element — the
-  refactored shared join also used by /api/revit/lookup/{id}); lookup drawer's
-  "Use current Revit selection" is now one call.
-- **Trust fixes shipped**: R-18 `revit_only_detail` causes + `status_detail`
-  pills (REVIT_UNCLASSIFIED vs REVIT_ONLY); R-07 scope_warnings banner
-  (pdf callouts > 0 but 0 Revit targets); R-29 per-device run diff
-  (`device_changes` in /api/runs/compare keyed category:mark:target_id;
-  baselines now snapshot devices — old baselines report device_changes:null
-  honestly; NOTE Madera's run_baseline.json was overwritten with a "trustfix"
-  snapshot during verification). Madera invariance proven: by_status identical
-  (MATCH 106) before/after.
-- Tests: backend/tests/test_trust_fixes.py (+10), test_revit_live.py grew to
-  cover subset compression + selected-element; smoke.spec.js mocks
-  /api/revit/selected-element for the one-call flow.
-
-## REVIT-LIVE PHASE 1 SHIPPED (2026-07-27 evening, live-verified on Madera)
-- **Flaw audit**: `docs/REVIT_SIDE_FLAW_REPORT.md` — 33 verified Revit-side
-  flaws (R-01..R-33), 2 reproduced by execution; read it before touching the
-  Revit side. Both planning docs cited NONEXISTENT Nonica tools
-  (`operate_element`, `send_code_to_revit`) — correction notes added to both;
-  real tools are `set_user_selection_in_revit` etc. There is NO zoom tool
-  (UX = select + "press ZS").
-- **R-01 FIXED** (chirality coin flip): device_match now uses the
-  calibration's stored `transform.inverse_matrix`
-  (`inverse_from_calibration()`); `fit_inverse` refuses <3 pairs. Verified
-  invariant: worst deviation 3.8e-8 ft across all 264 Madera callouts.
-- **R-13 FIXED**: routers/revit.py now uses `revit_ids.unique_id_to_element_id`
-  (correct XOR decode) everywhere.
-- **New endpoints** (routers/revit.py, additive): POST /api/revit/highlight
-  (assembly_id or element_ids → selects ALL coordinate hits in live Revit),
-  GET /api/revit/selection, GET /api/revit/lookup/{element_id} (paste-an-id →
-  assembly + device verdict + review.analyze() facts + deterministic
-  plain_english + classification_reason + registration_quality). Bridge adds
-  select_elements/get_selection/element_location.
-- **R-24/R-19 partial**: device_registry now carries `registration_quality`
-  per sheet; lookup surfaces `classification_reason`.
-- **Frontend**: new `src/panels/revit_live.js` — 🎯 Show in Revit button
-  (inspector + review drawer, greys out honestly when connector off),
-  "Why this verdict?" details block (calls GET /api/review/{row_id}/analysis),
-  🔎 Revit ID header drawer (paste id or "Use current Revit selection").
-  Also FIXED: viewer3d.js had lost its `loadScene` export (app.js import
-  crashed the whole module graph) — restored minus the removed IFC bits.
-- **Tests**: 190 pytest green (165 baseline +25, new tests/test_revit_live.py);
-  Playwright 7/7 green. MATCH baseline is now **106** (was 107): the 7-24
-  leader-anchor snap made 4 previously human-accepted mismatches natural
-  MATCHes (verified device-by-device; the one stored reject still honored).
-- **Live acceptance**: rev_asm_004 (H2 LOCATION_MISMATCH) highlighted in the
-  open Madera model via the UI button; selection read back = its 3 member
-  ids; lookup of 1222142 returns the full explanation chain.
-- NOT done (deferred, see flaw report Part 4): live model fetch replacing the
-  JSON export, qa_status write-back (use set_additional_property_* when you
-  do), SCOPE_SUSPECT verdict, export-age banner, R-06/R-07/R-14.
-
-## Scope Changes (2026-07-21)
-
-### IFC Integration Removed
-
-All IFC/BuildingSmart data-model integration has been completely removed from the codebase:
-
-**Backend (Python):**
-- `routers/elements.py`: Removed `ifc_status()` and `ifc_model()` endpoints
-- `routers/projects.py`: Removed IFC upload handling from `POST /upload`
-- `main.py`: Removed IFC re-exports from elements module
-- `revit_ids.py`: Removed IFC GlobalId handling functions
-
-**Frontend:**
-- Deleted `src/ifc_guid.js` entirely
-- `src/panels/viewer3d.js`: Removed all IFC rendering logic (`initIFCViewer`, IFC element coloring, IFC picking, web-ifc import)
-- `index.html`: Removed web-ifc library dependency and IFC button from UI
-
-**Tests:**
-- Removed `test_ifc_status_and_serve` from test suite
-
-**Reason:** The IFC viewer approach was abandoned in favor of direct Revit data extraction and the existing 3D visualization pipeline, which provides better integration with the native Revit coordinate system and element metadata.
+> **Fresh agent:** read this top-to-bottom before touching anything. It encodes
+> where the project is, the pinned decisions, and the current task (element
+> expansion). The other source of truth is `C:\QA-QC Livio Automation` (the
+> *new* engine/R&D repo) — **this repo `C:\QA-QC-FINAL-PROTOTYPE-bkp` is the
+> production-trained prototype** where recent deployment/Project-Manager work
+> landed.
 
 ---
 
-## DOGWOOD DEMO (2026-07-15, CEO meeting) — done end-to-end, nothing mid-edit
-- Exporter unicode crash fixed (ASCII-fold _fold() inline in
-  ExportQAQC.pushbutton/script.py; 0xD8 diameter bytes -> "dia.").
-- HTT tension-tie support: revit_v3_adapter HOLDOWN_FAMILY_RE now
-  (HTT|HD[UB]?), variant keys PREFIXED ("HD15S", "HTT4") on BOTH spec and
-  family sides; self-checks + 86 tests green.
-- NEW spec_map_from_pdf_tables() in revit_v3_adapter + _spec_map_with_fallback()
-  in main.py: when schedule row-parse yields {}, re-reads each holdown table
-  bbox from the PDF (words grouped by y-row, mark/type disambiguated by the
-  table's own column x-ranges). Dogwood: {'HTT4': 'HD2'} — matches the
-  drawing's HOLDOWN SCHEDULE exactly.
-- Pipeline order that WORKS for a fresh project: upload pdf -> extract ->
-  page-intelligence (needs ei for the generic fallback; S-201 detector fails
-  honestly on non-Madera sets) -> upload revit json -> ai-convert(use_saved)
-  -> pdf ai-convert(use_saved) -> auto-holdown RANSAC -> compare -> match.
-- Dogwood results: 43 PDF holdown devices vs 62 Revit (60 HTT4=HD2);
-  16 MATCH / 20 LM (systematic: analyze() reports 15/19 peers same direction,
-  lean-accept) / honest PDF_ONLY 16, REVIT_ONLY 35. Shear walls: 25 PDF runs
-  vs 0 walls in export (view hides walls — re-export with Walls visible).
-- Project workspace: artifacts/projects/dogwood-lane, active on server.
+## What this project is
 
-## Immediate next action (start here)
-SPRINT COMPLETE — do NOT recreate device_match.py or redo any [x] item.
-Remaining queue:
-1. 3 tiny patches (diffs in transcript + NEW_SESSION_PROMPT.md): scene3d.py
-   ~L89 `if c.get("z")` -> `is not None`; element_registry.py ~L35 duplicate
-   sheet_number overwrite; elements_match ARTIFACT_DIR race guard.
-2. GitHub push: PRIVATE repo `Livio-QA-QC-AI`; never store tokens in files;
-   .gitignore artifacts/ artifacts_*/ **/uploads/ .env __pycache__/
-   .playwright-mcp/ *.log; verify no sk-or-v1 key committed. The ghp_ token
-   the user pasted in chat is BURNED — user must rotate it first.
-3. Country Side live acceptance via mcp__Revit__* (expect 28 columns) when
-   that model is open in Revit.
-4. WAIT for the user to describe the "Livio checklist" (next major phase) —
-   do not build it speculatively.
+An AI-assisted **Revit ↔ PDF structural QA/QC** workstation. It reads a client
+structural PDF + a Revit model export, aligns their coordinates, and produces a
+per-element verdict: `MATCH / LOCATION_MISMATCH / MARK_MISMATCH / PDF_ONLY /
+REVIT_ONLY / NEEDS_REVIEW` — each with a plain-English reason. Live Revit
+pillar (Nonica PRO + revitMCP) binds findings to real model elements + "Show in
+Revit".
 
-## Verification / smoke test (run before declaring any phase done)
-1. From `backend/`: `python -m pytest -q` — must stay green (86 as of handoff).
-2. Start server: `python -m uvicorn app.main:app --host 127.0.0.1 --port 8077`.
-3. Re-activate project (`POST /api/projects/activate`) before any chained call.
-4. Hit `GET /api/devices`; check against probe ground truth: Madera = 122 callout
-   rows → 62 physical devices, 0 devices without a Revit partner within 6ft,
-   expect ~40+ device MATCH and 0 phantom PDF_ONLY.
-5. Confirm `device_registry.json` artifact is written and statuses are re-applied
-   truthfully to element_list rows with device evidence in the reason field.
+## Two repositories — know which you're in
+
+| Repo | Role | Owns |
+|---|---|---|
+| `C:\QA-QC-FINAL-PROTOTYPE-bkp` | **Prototype, production-trained** | holdowns + all sacred math, exporters, recent Vite + Project Manager + installer work |
+| `C:\QA-QC Livio Automation` | **R&D fresh engine build** | clean architecture (Phase 0–8), Grok AI bus, new PM, installer — the "new app" | 
+
+Rule: for **product/shipping on real data**, work in the prototype. For
+**architecture/R&D/clean-slate**, work in the Automation repo. They are NOT in
+sync — treat each as independent.
+
+## Environment (hard)
+
+- Python **3.11** only (vendored/frozen PyMuPDF + Pillow). `py -3.11`. Never bare `python`.
+- Backend: FastAPI on `127.0.0.1:8077`, 1 worker. Launch:
+  - `backend-start.ps1` (new, pretty banner)
+  - or `py -3.11 -m uvicorn app.main:app --host 127.0.0.1 --port 8077 --workers 1` from `backend/`
+- Frontend: **Vite build** now. `cd frontend; npm ci; npm run build` → serves `frontend/dist`
+- Tests: `cd backend; py -3.11 -m pytest -q`
+- **Known baseline:** ~355 pass / ~11 fail in frozen `normalization.py`/`control_points.py`
+  — do NOT "fix" by changing production data unless asked.
+
+## Recent work in THIS repo (uncommitted, working tree)
+
+### 1. Project Manager (backend + UI) — the big recent change
+- `backend/app/routers/projects.py`: real CRUD — `POST/GET /api/projects`,
+  `GET /api/projects/{slug}` (incl. `size_bytes/file_count`), `PATCH` whitelist
+  (`display_name, client, revision, status, notes`). Additive manifest keys.
+- `frontend/src/panels/projects.js`: card-grid overlay, verdict progress rings,
+  Create/Open/Edit/Delete with typed confirm.
+- Test: `backend/tests/test_projects_crud.py`; Playwright `frontend/tests/projects.spec.js`.
+- `backend/tests/conftest.py` autouse guard pops a shadowing `ARTIFACT_DIR`
+  (prevented a live-manifest clobber). Repair tool: `scripts/repair_manifest.py`.
+
+### 2. Vite migration (frontend)
+- `frontend/vite.config.js`, `frontend/src/fonts.js`. Removed CDN (Google Fonts,
+  GSAP, importmap) from `index.html` → bundled, offline-capable.
+- `config.frontend_dir()` prefers `frontend/dist` if built, else source.
+- Playwright globalSetup builds first.
+
+### 3. Launcher + Setup
+- `backend-start.ps1` (new), `setup.bat` (self-extracting PS), `installer/qaqc.iss`
+  (Inno Setup), **deleted** old `scripts/setup_qaqc.ps1` + `run_backend.ps1`.
+- Guide: `docs/AGENT_EXECUTION_GUIDE.md`.
+
+## Core logic (the part a fresh agent MUST understand)
+
+### The QA pipeline (artifact chain, all JSON on disk per project)
+
+```
+upload PDF + Revit export (export_watch or /api/upload)
+  → element_detector.scan_pdf (schedule tables → learn vocab → find plan marks)
+  → page intelligence → pdf_convert + leader_anchor.snap
+  → register (RANSAC / benchmarks / manual) → registration_calibration.json
+  → compare (holdowns, point) → device_match (physical devices in feet)
+  → wall_match (shear walls, segment)
+  → element_registry.build_element_list → element_list.json
+  → review mobile (accept/reject) + punch list
+```
+
+### The REUSABLE pattern (the current task hinges on this)
+
+1. `schedule_tables.discover_tables()` — finds schedule tables by **header text
+   regex** → infers MARK column → `learned_vocabulary {category: {mark: spec}}`.
+   **No hardcoded marks.** `CATEGORY_HEADERS` + `CATEGORY_MARK_RE` list known families.
+2. `element_detector.detect_marks()` — plan tokens matching vocab → mark instances
+   with `center_pdf`. Handles multiplicity "(2)P-1", excludes tables/title/detail refs.
+3. **Two match shapes:**
+   - **POINT** (holdowns, posts, steel columns): `compare.py` pairs transformed
+     Revit centers with PDF points by mark + distance gate → MATCH/LM/PO/RO.
+     `device_match.py` clusters multi-sheet callouts to physical devices in FEET.
+   - **SEGMENT** (shear walls): `wall_match.py` PDF point → Revit wall centerline.
+4. `element_registry.build_element_list()` — joins all into one category/mark/status list.
+
+Everything downstream is **category-driven** (reads `category`/`mark` from
+artifacts, never hardcodes a name).
+
+### Categories already wired (may be partial)
+- `holdown` (strong, compare + device_match)
+- `shear_wall` (segment)
+- `post` (`{post:(P,)}` in pipeline `V3_POINT_CATEGORIES`)
+- `steel_column` (`{steel_column:(C,)}` in `V3_POINT_CATEGORIES`)
+- `wall_type` (spec-only rows)
+- `unknown` (generic \bSCHEDULE\b fallback)
+
+## CURRENT TASK (the priority)
+
+**Expand QA-QC beyond hold-downs to all structural elements** using the same
+generic engine — NO hardcoding. The per-element list + generic recipe was
+delivered to the user (point-matched beams/joists/footings/embeds/stairs/
+connections + segment-matched wall types/frames). Implement categories by the
+recipe: add header regex + mark regex + (point prefix in `V3_POINT_CATEGORIES`
+OR segment handler), reuse `compare`/`device_match`.
+
+## PIPELINE FIX (completed 2026-08-17 — this is the new baseline)
+
+**LAYER 2 — React shell landed (2026-08-17).** `frontend/react.html` + `frontend/src/react/` is a React 18 + TS + Tailwind v4 + shadcn-style foundation served at `/react.html`, built by the SAME `npm run build` (multi-entry: `index.html` vanilla + `react.html` React). Structure: `src/react/{components/ui, lib, state, types, assets}`. `@/*` → `src/react/*`. API boundary in `lib/api.ts` (run/status/ai-status/projects), SSE hook `lib/use-pipeline-events.ts`, state `state/run-context.tsx` (RunProvider). Livio brand tokens in `index.css` (bg #161618, Livio blue #06adf5, accent #76b900). Logo: `src/react/assets/livio-logo-dark.png` (from grid.golivio.com). Verified: typecheck clean, build clean, /react.html renders live run state + SSE + AI status against dogwood-lane; legacy app untouched (still the default at /). DO NOT migrate PDF overlay / viewer3d / list / inspector / projects / chat yet — they stay vanilla until their phases.
+
+Phase 1 hardening landed. The new architecture:
+
+- **Run model** (`app/run_engine.py` + `app/stage_graph.py`): `POST /api/pipeline/run?force=` starts a BACKGROUND run (202) and returns immediately; `GET /api/pipeline/run` reads the persisted `run_state.json` (survives refresh/disconnect); `GET /api/pipeline/status` unchanged for compat. Duplicate runs → 409 with run_id; stale runs (thread dead) auto-recover. SSE per-stage start/done/error/skip via `progress.emit`. Dependency-aware invalidation: `stage_graph.invalidate_downstream(key)` deletes downstream artifacts; failed stages invalidate downstream automatically; `force=true` wipes all outputs first.
+- **Generic-first detection** (`app/profile.py`): the frozen S-201/Madera detector runs ONLY when project_manifest declares `detection_profile: "madera"`. `_detect_sheet_number` returns None (no "S-201" fallback); `compare_sheet` derives from page-intel (no hardcode); upload filename is `input.pdf` (not `uploaded_madera.pdf`). NO fabrication: failed schedule parse → `schedule_not_parsed` with empty specs; uncovered marks → `not_in_schedule`. `DEFAULT_HOLDOWN_SCHEDULE` exists only behind the opt-in profile.
+- **Performance**: atomic artifact writes (tmp+os.replace) + mtime-aware load cache (routers/common.py); cached revit status (no MCP spawn per poll); scene3d serves from cache; single PDF open per match loop; `pdf_page_intelligence` is sync `def` (threadpool, not event loop); frontend: debounced search, deferred wizard/inspector fetches, live-scene only on toggle, SSE-idle fallback poll.
+- **Frontend**: `pipeState()` now reads run_state ("running" survives refresh); `pollRunState()` renders live stage list; 409 → reuse in-flight run.
+
+Tests: 373 pass / 12 fail (10 pre-existing frozen normalization/control_points + 1 test-ordering leak in test_upload_attach + 1). New test files: test_run_state, test_run_invalidation, test_ai_status_endpoint, test_upload_attach, test_concurrent_projects.
+
+**DON'T**:
+- add `if slug == "madera"` or any client literals to engine code
+- let LLM write verdicts (MATCH is deterministic-only)
+- re-add manual step buttons — the guided flow + `/api/pipeline/run` is the goal
+- delete `frontend/dist` without rebuilding (`npm run build`)
+- run the S-201 detector without the madera profile (generic is the default)
 
 ## Do-not-repeat gotchas
-- PDF y is FLIPPED vs model y — always try both chiralities in any similarity fit.
-- All distance thresholds are in FEET (MATCH ≤2, LOCATION_MISMATCH 2–6), not points.
-- Never silently mutate a status: audit trail lives in `review_comments.json`;
-  human-accepted matches carry `via:"human_review"` and retain original distance.
-- REVIT_ONLY only when no callout exists anywhere — not merely no nearby callout.
-- Keep `frontend/index.html` and `index_v3_backup.html` in sync.
-- Write the plan doc FIRST for Human Review v2 (`docs/HUMAN_REVIEW_V2_PLAN.md`)
-  before writing any code for sprint item 3.
+
+- PDF y is FLIPPED vs model y — always try both chiralities in fits.
+- Distances: model FEET (device_match MATCH ≤2ft, LM ≤6ft) vs PDF POINTS (compare 16/40pt). Don't mix.
+- Export = source of truth for math; live = interaction only.
+- Tests must not leave `config.ARTIFACT_DIR` as a real attribute (conftest guard).
+- Never ship client PDFs / corpus in the installer.
+- Nonica window must be OPEN (not just installed) else `connected:false`.
+- Revit modal dialog blocks MCP tools — honest error, not "nothing selected".

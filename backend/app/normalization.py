@@ -19,35 +19,41 @@ def _load_project_config() -> dict:
     return {}
 
 
+# The Madera H1-H4<->HDU vocabulary. Served ONLY behind the opt-in madera
+# detection profile (project manifest declares detection_profile == "madera",
+# see app/profile.py); every other project gets generic behavior — an empty
+# map, learned from its own data.
+MADERA_VOCAB: dict[str, str] = {
+    "HDU6": "H1",
+    "HDU11": "H2",
+    "HD10S": "H3",
+    "HD15B": "H4",
+}
+
+
+def _madera_profile_active() -> bool:
+    """Opt-in gate: the Madera vocabulary is available only when the active
+    project's manifest declares detection_profile == 'madera'."""
+    try:
+        from . import profile
+
+        return profile.detection_profile() == "madera"
+    except Exception:
+        return False
+
+
 def _build_core_token_map() -> dict[str, str]:
-    """Build CORE_TOKEN_TO_MARK: project config wins; a known non-Madera active
-    project with no config gets an EMPTY map (mapping must be learned from that
-    project's own data — Madera's H1-H4↔HDU vocabulary must not leak into it);
-    everything else (Madera active, or no project context at all) keeps the
-    legacy mapping so existing tests and the frozen baseline stay reproducible.
-    """
+    """Build CORE_TOKEN_TO_MARK: project config wins; otherwise the Madera
+    H1-H4<->HDU vocabulary is served only behind the opt-in madera detection
+    profile. Every other project (including no project context at all) gets an
+    EMPTY map — generic behavior, no Madera vocabulary leakage."""
     cfg = _load_project_config()
     vocab = cfg.get("holdown_vocabulary")
     if isinstance(vocab, dict) and vocab:
         return {str(k).upper(): str(v).upper() for k, v in vocab.items()}
-    try:
-        from . import config
-        slug = config._PROJECT_SLUG.get()
-        if slug is None:
-            try:
-                slug = config.active_project()
-            except Exception:
-                slug = None
-        if slug is not None and slug != "madera":
-            return {}
-    except Exception:
-        pass
-    return {
-        "HDU6": "H1",
-        "HDU11": "H2",
-        "HD10S": "H3",
-        "HD15B": "H4",
-    }
+    if _madera_profile_active():
+        return dict(MADERA_VOCAB)
+    return {}
 
 
 def _core_token_map() -> dict[str, str]:

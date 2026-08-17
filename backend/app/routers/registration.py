@@ -143,9 +143,10 @@ def pdf_control_points_save(payload: dict[str, Any] = Body(...)) -> JSONResponse
             detail='Body must be {"points":[{"id":..,"label":..,"point":{"x":..,"y":..}}], '
                    '"page_index":?, "sheet_number":?}.',
         )
+    sheet = payload.get("sheet_number") or _primary_sheet()
     saved = control_points.save_pdf_control_points(
         payload["points"],
-        sheet_number=str(payload.get("sheet_number") or "S-201"),
+        sheet_number=sheet,
         page_index=payload.get("page_index"),
     )
     return JSONResponse(saved)

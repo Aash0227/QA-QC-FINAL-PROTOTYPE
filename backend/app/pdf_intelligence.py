@@ -21,12 +21,11 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _detect_sheet_number(pdf_path: Path, page_index: int) -> str:
+def _detect_sheet_number(pdf_path: Path, page_index: int) -> str | None:
     """Extract the actual sheet number from the located page text.
 
     Looks for a sheet-number pattern (e.g. S-201, S-101, A-5) on the page.
-    Falls back to 'S-201' if no pattern is found (the locate function searched
-    for S-201, so that is the most likely match).
+    Returns None when no pattern is found — never guesses 'S-201'.
     """
     try:
         doc = fitz.open(str(pdf_path))
@@ -41,7 +40,7 @@ def _detect_sheet_number(pdf_path: Path, page_index: int) -> str:
             doc.close()
     except Exception:
         pass
-    return "S-201"
+    return None
 
 
 def run_page_intelligence(pdf_path: str | Path) -> dict[str, Any]:
@@ -109,6 +108,11 @@ def run_page_intelligence(pdf_path: str | Path) -> dict[str, Any]:
             "note": "Schedule entries vs plan instances (project-specific baseline checked separately).",
         },
     }
+    if sheet_number is None:
+        # Honest gap: no sheet-number pattern on the page, no S-201 guess.
+        result["notes"].append(
+            "No sheet-number pattern found on the page; sheet_number is None."
+        )
 
     if baseline_marks:
         result["expected_baseline"] = baseline_marks

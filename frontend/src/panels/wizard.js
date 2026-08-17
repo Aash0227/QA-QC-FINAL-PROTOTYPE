@@ -321,7 +321,9 @@ $("#bm-close").onclick = () => {
   if (bmw.stopPoll) { bmw.stopPoll(); bmw.stopPoll = null; }
 };
 
-/* Subscribe + load at boot (not on wizard open): the approval banner has to
-   appear on its own after an upload's auto-benchmark, wizard untouched. */
+/* Subscribe to the stream so the approval banner surfaces on its own while
+   events flow (an upload's auto-benchmark parks a proposal without touching
+   the wizard). The initial state load is deferred to first drawer open
+   (#btn-autopilot handler below) — no page load pays a benchmark-workflow
+   fetch it doesn't need. */
 onStep("benchmark_workflow", e => { bmLog(e); bmRefresh(); });
-bmRefresh();

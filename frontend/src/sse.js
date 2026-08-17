@@ -35,8 +35,14 @@ export function onAny(cb) {
 }
 
 /* One slow fallback poll (§8): a safety net for state an external agent may
-   advance out-of-band that the SSE stream doesn't surface. Returns a stop fn. */
+   advance out-of-band that the SSE stream doesn't surface. Idle-timeout
+   pattern — every SSE event resets the timer, so while the stream is healthy
+   the poll never fires; it only runs after ``ms`` of stream silence.
+   Returns a stop fn. */
 export function startFallbackPoll(cb, ms = 8000) {
-  const id = setInterval(cb, ms);
-  return () => clearInterval(id);
+  let id = null;
+  const arm = () => { id = setTimeout(() => { cb(); arm(); }, ms); };
+  arm();
+  const off = onAny(() => { clearTimeout(id); arm(); });
+  return () => { clearTimeout(id); off(); };
 }
