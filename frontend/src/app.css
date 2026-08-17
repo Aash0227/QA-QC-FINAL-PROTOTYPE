@@ -106,15 +106,15 @@ header:has(#adv-menu[open]){z-index:70}
 #dual{display:grid;grid-template-columns:1fr 1fr;gap:12px;min-height:0}
 #dual.sheet-max{grid-template-columns:1fr 0}
 #dual.model-max{grid-template-columns:0 1fr}
-#dual>.pane{display:flex;flex-direction:column;min-height:0;overflow:hidden;transition:opacity .25s}
+#dual>.pane{display:flex;flex-direction:column;min-height:0;overflow:hidden;transition:opacity .25s;background:transparent}
 #dual.sheet-max #model-panel,#dual.model-max #sheet-panel{opacity:0;pointer-events:none}
-.pane-bar{display:flex;gap:8px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.pane-bar{display:flex;gap:8px;align-items:center;padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.06);flex-wrap:wrap;background:rgba(20,23,28,.35);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
 .pane-bar .title{font-family:var(--font-mono);font-weight:600;font-size:11.5px;color:var(--dim);letter-spacing:.1em;text-transform:uppercase}
 
 #tabs{display:flex;gap:6px;flex-wrap:wrap}
 .tab{padding:4px 12px;border-radius:9px;border:1px solid var(--line);color:var(--dim);cursor:pointer;font-size:12px}
 .tab.on{color:var(--accent);border-color:var(--accent);background:rgba(94,234,212,.08)}
-#viewport{flex:1;position:relative;overflow:hidden;cursor:grab;background:#0a0f1c;border-radius:0 0 16px 16px}
+#viewport{flex:1;position:relative;overflow:hidden;cursor:grab;background:rgba(10,15,28,.55);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-radius:0 0 16px 16px}
 #viewport.measuring{cursor:crosshair}
 #cam{position:absolute;transform-origin:0 0;will-change:transform}
 #page-img{display:block;user-select:none;pointer-events:none;filter:brightness(.94)}
@@ -129,7 +129,7 @@ header:has(#adv-menu[open]){z-index:70}
 @keyframes pulse{0%{stroke-opacity:1;stroke-width:3}100%{stroke-opacity:0;stroke-width:14}}
 
 /* 3D pane */
-#three-wrap{flex:1;position:relative;overflow:hidden;border-radius:0 0 16px 16px;background:#080d18}
+#three-wrap{flex:1;position:relative;overflow:hidden;border-radius:0 0 16px 16px;background:rgba(8,13,24,.55);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
 #three-tip{position:absolute;pointer-events:none;background:rgba(10,15,28,.95);border:1px solid var(--line);
   border-radius:9px;padding:6px 11px;font-size:12px;display:none;z-index:5;max-width:270px}
 #three-legend{position:absolute;left:12px;bottom:10px;display:flex;gap:8px;flex-wrap:wrap;z-index:4;max-width:75%}
