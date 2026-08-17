@@ -293,7 +293,7 @@ async function pollRunState() {
   renderPipeline();
 }
 
-$("#btn-pipe").onclick = () => { $("#pipe-modal").classList.add("open"); startRun(); };
+$("#btn-pipe").onclick = () => { window.location.href = "/pipeline.html"; };
 $("#btn-pipe-close").onclick = () => $("#pipe-modal").classList.remove("open");
 
 /* ---------------- boot ---------------- */

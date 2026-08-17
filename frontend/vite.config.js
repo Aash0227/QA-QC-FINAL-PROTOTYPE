@@ -44,11 +44,11 @@ export default defineConfig({
     chunkSizeWarningLimit: 1200,
     sourcemap: true,
     rollupOptions: {
-          input: {
-            main: fileURLToPath(new URL("./index.html", import.meta.url)),
-            legacy: fileURLToPath(new URL("./legacy.html", import.meta.url)),
-          },
-        },
+      input: {
+        main: fileURLToPath(new URL("./index.html", import.meta.url)),
+        pipeline: fileURLToPath(new URL("./pipeline.html", import.meta.url)),
+      },
+    },
   },
   server: {
     port: 5173,

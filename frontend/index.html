@@ -1,12 +1,272 @@
-<!doctype html>
-<html lang="en" class="dark">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Livio QA/QC</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/react/main.tsx"></script>
-  </body>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Livio QA-QC Intelligence</title>
+<link rel="icon" href="data:,">
+<!-- production-plan §1/§7: one token system + one component set, native ES
+     modules. Vite bundles them and vendors what used to come from CDNs — fonts
+     via @fontsource in tokens.css, three + gsap via npm imports — so the app
+     loads with the network off. Adding a <script src="https://…"> here
+     silently reintroduces that dependency; import it as a module instead. -->
+<link rel="stylesheet" href="src/tokens.css">
+<link rel="stylesheet" href="src/components.css">
+<link rel="stylesheet" href="src/app.css">
+</head>
+<body>
+<canvas id="kinetic-bg" aria-hidden="true"></canvas>
+<div id="app">
+  <!-- Header: 5 visible verbs (UI_DEPLOY_PLAN_UI §1a/§3). Everything advanced
+       lives in the ⚙ <details> popover — MOVED, never deleted: every panel
+       wires $("#id").onclick at import time, so a missing id blanks the app. -->
+  <header class="glass">
+    <div class="hzone">
+      <button class="mini" id="btn-left" title="Show/hide the element list">☰</button>
+      <div class="brand">
+        <img src="./livio-logo-white.png" alt="Livio" class="brand-logo">
+      </div>
+      <button class="mini" id="btn-projects" title="Create, open, rename or delete a project">
+        📁 <span id="proj-name">Projects</span></button>
+    </div>
+    <div class="hsep"></div>
+    <div class="hzone grow"><span id="hdr-stats" class="badge">loading…</span></div>
+    <div class="hsep"></div>
+    <div class="hzone">
+      <button id="btn-pipe" title="Open the Pipeline" style="cursor:pointer" onclick="window.location.href='/pipeline.html'">⚡ Pipeline</button>
+      <button id="btn-table" title="Show every element and its verdict">▤ All results</button>
+      <button id="btn-review" class="primary" title="Elements that need your judgement">⚠ Needs review (<span id="rev-count">0</span>)</button>
+      <button id="btn-chat" title="Ask a question about this project">💬 Ask</button>
+      <details id="adv-menu">
+        <summary title="Advanced tools">⚙</summary>
+        <div class="adv-list">
+          <button id="btn-extract" title="Re-scan every sheet for elements">① Extract elements</button>
+          <button id="btn-match" title="Re-match the drawing against the model">② Match to model</button>
+          <button id="btn-autopilot" title="Benchmark Autopilot — 2-point registration">◎ Registration wizard</button>
+          <button id="btn-runs" title="Previous run vs current run">⚖ Compare with the last run</button>
+          <button id="btn-revit-lookup" title="Look up a Revit ElementId in the live model">🔎 Find an element in Revit</button>
+        </div>
+      </details>
+    </div>
+  </header>
+
+  <div id="main">
+    <!-- LEFT: grouped element list -->
+    <div id="left">
+      <div id="list-panel" class="glass">
+        <input id="search" type="text" placeholder="Search mark, id, status…"/>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <select id="status-filter" style="flex:1"><option value="">All statuses</option></select>
+          <select id="sheet-filter" style="flex:1"><option value="">All sheets</option></select>
+        </div>
+        <div id="list-rows" role="listbox" aria-label="Elements — press J and K to step through"></div>
+      </div>
+    </div>
+
+    <!-- CENTER: 50/50 PDF | 3D -->
+    <div id="dual">
+      <div class="pane glass" id="sheet-panel">
+        <div class="pane-bar">
+          <span class="title">DRAWING</span>
+          <div id="tabs"></div>
+          <span style="flex:1"></span>
+          <button class="mini" id="btn-measure" title="Measure between two points">📏</button>
+          <button class="mini" id="btn-fit" title="Fit the sheet to the pane">⛶</button>
+          <button class="mini" id="btn-layers" title="Show or hide element types on the drawing">Show / hide</button>
+          <button class="mini" id="btn-sheet-max" title="Expand PDF">⤢</button>
+        </div>
+        <div class="pane-bar" id="layer-bar" style="display:none"><span id="layer-toggles"></span>
+          <label style="color:var(--dim);font-size:11px;margin-left:auto">Opacity
+            <input id="opacity" type="range" min="10" max="100" value="90" style="width:90px;vertical-align:middle"></label>
+        </div>
+        <div id="viewport">
+          <div id="cam"><img id="page-img" alt="sheet"/><svg id="overlay"></svg></div>
+        </div>
+      </div>
+
+      <div class="pane glass" id="model-panel">
+        <div class="pane-bar">
+          <span class="title">3D MODEL</span>
+          <span class="chip" id="three-live-badge" style="color:#94a3b8;border-color:#94a3b855">SNAPSHOT · last export</span>
+          <span style="flex:1"></span>
+          <button class="mini" id="btn-3d-live" title="Re-read the open Revit model">⟳ Refresh from Revit</button>
+          <button class="mini" id="btn-sw-only" title="Show only shear walls">Shear walls only</button>
+          <button class="mini" id="btn-top">Top view</button>
+          <button class="mini" id="btn-3d-reset">Reset view</button>
+          <button class="mini" id="btn-model-max" title="Expand 3D">⤢</button>
+        </div>
+        <div id="three-wrap">
+          <div id="three-tip"></div>
+          <div id="three-legend"></div>
+          <div id="three-note">Waiting for the model… · drag to orbit · click to select</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="pane glass hidden" id="table-panel">
+    <div class="pane-bar">
+      <span class="title">RESULTS TABLE</span>
+      <span style="flex:1"></span>
+      <button class="mini" id="btn-table-close">✕</button>
+    </div>
+    <div id="scope-banner"></div>
+    <div id="table-wrap">
+      <table id="results-table">
+        <thead><tr>
+          <th data-k="mark">Mark</th>
+          <th data-k="category">Category</th>
+          <th data-k="sheet">Sheet</th>
+          <th data-k="status">Status</th>
+          <th data-k="distance_ft" class="num">Distance (ft)</th>
+          <th data-k="device_id">Device</th>
+          <th data-k="reason">Reason</th>
+        </tr></thead>
+        <tbody id="results-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Benchmark Autopilot wizard (P4) -->
+<div id="bmwizard">
+  <button class="bw-close" id="bm-close">✕ Close</button>
+  <div class="bw-shell">
+    <nav id="bm-rail" aria-label="Workflow steps"></nav>
+    <main>
+      <div class="bw-kicker">Benchmark Autopilot · 2-point registration</div>
+      <h1>Zero-Click Registration</h1>
+      <p class="bw-sub">Agent proposes grid intersections · human approves · agent stamps the PDF and places Revit markers · calibration saved only through the quality-gated solver.</p>
+      <div id="bm-cards"></div>
+      <div class="bw-card">
+        <h2>Live log</h2>
+        <div id="bm-log"><div style="opacity:.5">— waiting for events —</div></div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<!-- Inspector drawer -->
+<div class="drawer glass" id="inspector" role="region" aria-label="Element details" aria-hidden="true">
+  <div class="drawer-hd">Element details <span style="flex:1"></span><button class="mini" data-close="inspector">✕</button></div>
+  <div class="drawer-bd">
+    <div id="insp-body"><span style="color:var(--dim)">Click any element in the list, drawing or 3D model.</span></div>
+    <h4 style="margin-top:20px">Count consistency (schedule vs plan)</h4>
+    <table id="cc-table"></table>
+  </div>
+</div>
+
+<!-- Chat drawer (agentic copilot — replaces the Teach drawer, §5) -->
+<div class="drawer glass" id="chat" role="region" aria-label="Ask about this project" aria-hidden="true">
+  <div class="drawer-hd">💬 Ask about this project
+    <span style="flex:1"></span><button class="mini" data-close="chat">✕</button></div>
+  <div class="drawer-bd">
+    <div id="chat-log"></div>
+  </div>
+  <div id="chat-input-row">
+    <input id="chat-input" type="text" placeholder='e.g. "how many holdowns?" · "highlight H2" · "HD3 means H3"'/>
+    <button id="chat-send" class="primary">Send</button>
+  </div>
+</div>
+
+<!-- Run comparison drawer -->
+<div class="drawer glass" id="runs" style="width:520px" role="region" aria-label="Compare with the last run" aria-hidden="true">
+  <div class="drawer-hd">⚖ Compare with the last run <span class="badge" id="runs-label">–</span>
+    <span style="flex:1"></span>
+    <button class="mini" id="runs-save-baseline" title="Freeze today's results as the reference for future runs">Save as baseline</button>
+    <button class="mini" data-close="runs">✕</button></div>
+  <div class="drawer-bd" id="runs-body">
+    <span style="color:var(--dim)">Loading…</span>
+  </div>
+</div>
+
+<!-- Needs-review drawer — the product: what Sagar actually judges -->
+<div class="drawer glass" id="review" style="width:480px" role="region" aria-label="Elements that need review" aria-hidden="true">
+  <div class="drawer-hd">⚠ Needs review <span class="badge" id="rev-progress">–</span>
+    <span style="flex:1"></span><button class="mini" data-close="review">✕</button></div>
+  <div class="drawer-bd" id="rev-body">
+    <div id="rev-list"></div>
+    <div id="rev-detail" style="display:none">
+      <button class="mini" id="rev-back">← Back to queue</button>
+      <div id="rev-head" style="margin:12px 0"></div>
+      <div style="display:flex;gap:8px;align-items:flex-start">
+        <div style="flex:1">
+          <div style="font-size:11px;color:var(--dim);margin-bottom:4px">
+            PDF evidence — <span style="color:#4ade80">● PDF</span> vs
+            <span style="color:#f87171">◌ Revit</span></div>
+          <img id="rev-crop" style="width:100%;border-radius:8px;border:1px solid #263349"/>
+        </div>
+      </div>
+      <div id="rev-why" style="margin:10px 0;font-size:12px;color:#cbd5e1"></div>
+      <div id="rev-ai" style="margin:10px 0"></div>
+      <div id="rev-verdict" style="margin:10px 0"></div>
+      <div style="display:flex;gap:6px;margin:10px 0;flex-wrap:wrap">
+        <button class="mini" data-disp="confirmed-issue">🔴 Confirmed issue</button>
+        <button class="mini" data-disp="false-alarm">🟢 False alarm</button>
+        <button class="mini" data-disp="fixed-in-model">🔧 Fixed in model</button>
+      </div>
+      <h4>Comments — teach the AI while you review</h4>
+      <div id="rev-thread"></div>
+      <div style="display:flex;gap:6px;margin-top:8px">
+        <input id="rev-comment" type="text" style="flex:1"
+               placeholder='e.g. "tag sits on a leader, real anchor is 2ft left"'/>
+        <button id="rev-send" class="primary mini">Send</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Revit ID lookup drawer (Revit-live §1) -->
+<div class="drawer glass" id="revitlookup" style="width:460px" role="region" aria-label="Find an element in Revit" aria-hidden="true">
+  <div class="drawer-hd">🔎 Find an element in Revit <span class="badge" id="rl-status">–</span>
+    <span style="flex:1"></span><button class="mini" data-close="revitlookup">✕</button></div>
+  <div class="drawer-bd">
+    <div style="display:flex;gap:6px">
+      <input id="rl-input" type="text" style="flex:1" placeholder="Paste a Revit Element ID"/>
+      <button id="rl-go" class="primary mini">Lookup</button>
+    </div>
+    <button class="mini" id="rl-selection" style="margin-top:8px" title="Reads whatever is selected in Revit right now">⇱ Use current Revit selection</button>
+    <div id="rl-body" style="margin-top:14px">
+      <span style="color:var(--dim)">Paste an ElementId, or pull the current selection straight from Revit.</span>
+    </div>
+  </div>
+</div>
+
+<!-- Project Manager overlay: create / open / rename / delete a workspace.
+     Same show-hide-by-class pattern as #pipe-modal; content is rendered by
+     src/panels/projects.js. -->
+<div id="projects" role="dialog" aria-modal="true" aria-labelledby="pm-title" aria-hidden="true">
+  <div id="pm-inner">
+    <div class="glass pm-head">
+      <h2 id="pm-title">Projects</h2>
+      <span class="badge" id="pm-count">–</span>
+      <span style="flex:1"></span>
+      <button class="primary" id="pm-new">＋ New project</button>
+      <button class="mini" id="pm-close">✕ Close</button>
+    </div>
+    <div id="pm-form-slot"></div>
+    <div id="pm-grid"></div>
+  </div>
+  <div id="pm-confirm" role="alertdialog" aria-modal="true">
+    <div class="glass" id="pm-confirm-body"></div>
+  </div>
+</div>
+
+<!-- Pipeline modal — guided QA/QC flow (no manual steps) -->
+<div id="pipe-modal">
+  <div id="pipe-inner">
+    <div class="glass pipe-head">
+      <h2 id="pipe-title">Run QA/QC</h2>
+      <span style="flex:1"></span>
+      <button class="mini" id="btn-pipe-close">✕ Close</button>
+    </div>
+    <div id="pipe-body"></div>
+  </div>
+</div>
+
+<div id="toast-box"></div>
+
+<script src="src/kinetic-grid.js"></script>
+<script type="module" src="src/app.js"></script>
+</body>
 </html>

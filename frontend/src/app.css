@@ -8,11 +8,12 @@
 *{box-sizing:border-box} html,body{height:100%}
 body{margin:0;background:radial-gradient(1400px 900px at 70% -10%,#161a20 0%,var(--bg) 55%);
   color:var(--txt);font:13.5px/1.55 var(--font-body);overflow:hidden}
+#kinetic-bg{position:fixed;inset:0;z-index:0;pointer-events:none;opacity:.75}
 
 /* header height is `auto` so the 4 zones can wrap on narrow screens instead of
    clipping — ponytail: honest overflow without a bespoke hidden-menu widget;
    add a real overflow menu if the header ever gets busier. */
-#app{display:grid;grid-template-rows:auto 1fr auto;height:100vh;gap:12px;padding:12px}
+#app{display:grid;grid-template-rows:auto 1fr auto;height:100vh;gap:12px;padding:12px;position:relative;z-index:1}
 #table-panel{max-height:38vh;display:flex;flex-direction:column;min-height:0}
 #table-panel.hidden{display:none}
 #table-wrap{overflow:auto;min-height:0}
