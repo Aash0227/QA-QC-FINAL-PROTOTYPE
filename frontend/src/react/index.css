@@ -1,0 +1,53 @@
+/* Livio QA/QC — React design foundation (Tailwind v4, dark-only).
+   Brand tokens extracted from grid.golivio.com: Livio blue #06adf5,
+   dark surface #161618, accent green #76b900. Structural guidance from the
+   ui-ux-pro-max design-system query (dense dashboard, minimal/Swiss). */
+
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@theme {
+  /* ── surfaces (dark-only) ─────────────────────────────── */
+  --color-background: #161618;
+  --color-foreground: #f4f4f5;
+  --color-card: #1d1d20;
+  --color-card-foreground: #f4f4f5;
+  --color-popover: #1d1d20;
+  --color-popover-foreground: #f4f4f5;
+  --color-primary: #06adf5; /* Livio blue */
+  --color-primary-foreground: #06131a;
+  --color-secondary: #26262b;
+  --color-secondary-foreground: #e4e4e7;
+  --color-muted: #27272a;
+  --color-muted-foreground: #a1a1aa;
+  --color-accent: #76b900; /* Livio green accent */
+  --color-accent-foreground: #0a1200;
+  --color-destructive: #f43f5e;
+  --color-destructive-foreground: #ffffff;
+  --color-border: #2e2e33;
+  --color-input: #2e2e33;
+  --color-ring: #06adf5;
+
+  --radius-sm: 0.25rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+  html {
+    color-scheme: dark;
+  }
+  body {
+    background: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+}

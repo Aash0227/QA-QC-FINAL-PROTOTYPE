@@ -111,7 +111,7 @@ export function usePipeline(): PipelineIslandState {
           : latest.kind === "done" ? "done"
           : latest.kind === "error" ? "failed"
           : latest.kind === "skip" ? "skipped"
-          : s.status === "active" ? "active" : s.status,
+          : "running", // fallback — preserve current kind from backend when known
         );
         return { ...s, status: newStatus, message: latest.message };
       });
