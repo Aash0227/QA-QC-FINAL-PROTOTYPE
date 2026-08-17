@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
+import { tokenized } from "@/lib/api";
+
 import type { PipelineEvent } from "@/types/pipeline";
 
 export type PipelineEventKind = PipelineEvent["kind"];
@@ -20,6 +22,12 @@ export interface PipelineEventsState {
 
 const EVENTS_URL = "./api/pipeline/events";
 
+/** SSE URL with the auth token appended when present (EventSource can't set
+ *  headers) — same contract as the vanilla sse.js client. */
+export function pipelineEventsUrl(): string {
+  return tokenized(EVENTS_URL);
+}
+
 /**
  * Single EventSource for pipeline stage events. The EventSource itself
  * auto-reconnects (browser default); this hook just surfaces connection state
@@ -39,7 +47,7 @@ export function usePipelineEvents({
   useEffect(() => {
     if (!enabled) return;
 
-    const source = new EventSource(EVENTS_URL);
+    const source = new EventSource(pipelineEventsUrl());
     source.onopen = () => setConnected(true);
     source.onerror = () => setConnected(false);
 

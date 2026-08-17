@@ -58,7 +58,7 @@ export async function loadAll(first = false) {
     ok = false;
     $("#hdr-stats").textContent = "no data yet — open ⚡ Pipeline";
   }
-  if (!ok) { if (first) openPipeline(); return; }
+  if (!ok) { if (first) window.location.href = "/pipeline.html"; return; }
   try {
     const ei = await api("/api/elements/intelligence");
     for (const s of ei.sheets) {

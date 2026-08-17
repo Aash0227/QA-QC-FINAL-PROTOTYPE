@@ -189,7 +189,13 @@ export default function KineticGrid({
     document.addEventListener("visibilitychange", visHandler);
 
     const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const reducedHandler = () => { if (mq.matches && rafRef.current) cancelAnimationFrame(rafRef.current); };
+    const reducedHandler = () => {
+      if (mq.matches) {
+        if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      } else if (!paused && !rafRef.current) {
+        rafRef.current = requestAnimationFrame(animate);
+      }
+    };
     mq.addEventListener("change", reducedHandler);
     if (mq.matches) { if (rafRef.current) cancelAnimationFrame(rafRef.current); }
 

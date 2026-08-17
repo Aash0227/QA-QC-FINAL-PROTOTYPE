@@ -27,6 +27,10 @@ export default function PipelineIsland() {
         {/* ── HEADER ──────────────────────────────────────────────── */}
         <header className="flex items-center justify-between border-b border-white/8 bg-background/50 backdrop-blur-md px-5 py-3 z-20">
           <div className="flex items-center gap-3">
+            <a href="/" className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors" title="Back to dashboard">
+              ◂ Dash
+            </a>
+            <div className="h-5 w-px bg-border/50" />
             <img src={logo} alt="Livio" className="h-7 w-auto" />
             <div className="h-5 w-px bg-border/50" />
             <span className="text-sm font-semibold text-foreground/90">Pipeline</span>

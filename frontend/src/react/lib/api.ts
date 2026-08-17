@@ -11,6 +11,18 @@ import type {
 
 const BASE = "./api";
 
+/** Same token contract as the vanilla client (src/api.js): backend may run
+ *  with QAQC_AUTH_TOKEN; the token lives in localStorage as "qaqc_token".
+ *  Bearer header for fetch, ?token= for the SSE EventSource. */
+export function authToken(): string {
+  try { return localStorage.getItem("qaqc_token") || ""; } catch { return ""; }
+}
+
+export function tokenized(url: string): string {
+  const t = authToken();
+  return t ? url + (url.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(t) : url;
+}
+
 async function jsonOrThrow<T>(res: Response): Promise<T> {
   if (!res.ok) {
     let detail = `${res.status} ${res.statusText}`;
@@ -36,12 +48,18 @@ export class ApiError extends Error {
   }
 }
 
+function authHeaders(): Record<string, string> {
+  const t = authToken();
+  return t ? { Authorization: `Bearer ${t}` } : {};
+}
+
 function post<T>(url: string, body?: unknown, project?: string): Promise<T> {
   return fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       ...(project ? { "X-Project": project } : {}),
+      ...authHeaders(),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
   }).then((r) => jsonOrThrow<T>(r));
@@ -49,7 +67,7 @@ function post<T>(url: string, body?: unknown, project?: string): Promise<T> {
 
 function get<T>(url: string, project?: string): Promise<T> {
   return fetch(url, {
-    headers: project ? { "X-Project": project } : {},
+    headers: { ...(project ? { "X-Project": project } : {}), ...authHeaders() },
   }).then((r) => jsonOrThrow<T>(r));
 }
 
