@@ -5,18 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Livio QA-QC Intelligence</title>
 <link rel="icon" href="data:,">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800&family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;600&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
-<script type="importmap">
-{ "imports": {
-  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
-} }
-</script>
 <!-- production-plan §1/§7: one token system + one component set, native ES
-     modules (no build step). ponytail: add Vite only if minification/bundling
-     ever matters — see production-grade-plan-final.md §1. -->
+     modules. Vite bundles them and vendors what used to come from CDNs — fonts
+     via @fontsource in tokens.css, three + gsap via npm imports — so the app
+     loads with the network off. Adding a <script src="https://…"> here
+     silently reintroduces that dependency; import it as a module instead. -->
 <link rel="stylesheet" href="src/tokens.css">
 <link rel="stylesheet" href="src/components.css">
 <link rel="stylesheet" href="src/app.css">
@@ -29,9 +22,11 @@
   <header class="glass">
     <div class="hzone">
       <button class="mini" id="btn-left" title="Show/hide the element list">☰</button>
-      <div class="brand">LIVIO&nbsp;QA-QC&nbsp;INTELLIGENCE</div>
-      <select id="proj-switch" class="mini" title="Active project"></select>
-      <button class="mini" id="btn-proj-del" title="Delete the selected project">🗑</button>
+      <div class="brand">
+        <img src="./livio-logo-dark.png" alt="Livio" class="brand-logo">
+      </div>
+      <button class="mini" id="btn-projects" title="Create, open, rename or delete a project">
+        📁 <span id="proj-name">Projects</span></button>
     </div>
     <div class="hsep"></div>
     <div class="hzone grow"><span id="hdr-stats" class="badge">loading…</span></div>
@@ -63,7 +58,7 @@
           <select id="status-filter" style="flex:1"><option value="">All statuses</option></select>
           <select id="sheet-filter" style="flex:1"><option value="">All sheets</option></select>
         </div>
-        <div id="list-rows"></div>
+        <div id="list-rows" role="listbox" aria-label="Elements — press J and K to step through"></div>
       </div>
     </div>
 
@@ -151,7 +146,7 @@
 </div>
 
 <!-- Inspector drawer -->
-<div class="drawer glass" id="inspector">
+<div class="drawer glass" id="inspector" role="region" aria-label="Element details" aria-hidden="true">
   <div class="drawer-hd">Element details <span style="flex:1"></span><button class="mini" data-close="inspector">✕</button></div>
   <div class="drawer-bd">
     <div id="insp-body"><span style="color:var(--dim)">Click any element in the list, drawing or 3D model.</span></div>
@@ -161,7 +156,7 @@
 </div>
 
 <!-- Chat drawer (agentic copilot — replaces the Teach drawer, §5) -->
-<div class="drawer glass" id="chat">
+<div class="drawer glass" id="chat" role="region" aria-label="Ask about this project" aria-hidden="true">
   <div class="drawer-hd">💬 Ask about this project
     <span style="flex:1"></span><button class="mini" data-close="chat">✕</button></div>
   <div class="drawer-bd">
@@ -174,7 +169,7 @@
 </div>
 
 <!-- Run comparison drawer -->
-<div class="drawer glass" id="runs" style="width:520px">
+<div class="drawer glass" id="runs" style="width:520px" role="region" aria-label="Compare with the last run" aria-hidden="true">
   <div class="drawer-hd">⚖ Compare with the last run <span class="badge" id="runs-label">–</span>
     <span style="flex:1"></span>
     <button class="mini" id="runs-save-baseline" title="Freeze today's results as the reference for future runs">Save as baseline</button>
@@ -185,7 +180,7 @@
 </div>
 
 <!-- Needs-review drawer — the product: what Sagar actually judges -->
-<div class="drawer glass" id="review" style="width:480px">
+<div class="drawer glass" id="review" style="width:480px" role="region" aria-label="Elements that need review" aria-hidden="true">
   <div class="drawer-hd">⚠ Needs review <span class="badge" id="rev-progress">–</span>
     <span style="flex:1"></span><button class="mini" data-close="review">✕</button></div>
   <div class="drawer-bd" id="rev-body">
@@ -221,7 +216,7 @@
 </div>
 
 <!-- Revit ID lookup drawer (Revit-live §1) -->
-<div class="drawer glass" id="revitlookup" style="width:460px">
+<div class="drawer glass" id="revitlookup" style="width:460px" role="region" aria-label="Find an element in Revit" aria-hidden="true">
   <div class="drawer-hd">🔎 Find an element in Revit <span class="badge" id="rl-status">–</span>
     <span style="flex:1"></span><button class="mini" data-close="revitlookup">✕</button></div>
   <div class="drawer-bd">
@@ -236,16 +231,35 @@
   </div>
 </div>
 
-<!-- Pipeline modal -->
+<!-- Project Manager overlay: create / open / rename / delete a workspace.
+     Same show-hide-by-class pattern as #pipe-modal; content is rendered by
+     src/panels/projects.js. -->
+<div id="projects" role="dialog" aria-modal="true" aria-labelledby="pm-title" aria-hidden="true">
+  <div id="pm-inner">
+    <div class="glass pm-head">
+      <h2 id="pm-title">Projects</h2>
+      <span class="badge" id="pm-count">–</span>
+      <span style="flex:1"></span>
+      <button class="primary" id="pm-new">＋ New project</button>
+      <button class="mini" id="pm-close">✕ Close</button>
+    </div>
+    <div id="pm-form-slot"></div>
+    <div id="pm-grid"></div>
+  </div>
+  <div id="pm-confirm" role="alertdialog" aria-modal="true">
+    <div class="glass" id="pm-confirm-body"></div>
+  </div>
+</div>
+
+<!-- Pipeline modal — guided QA/QC flow (no manual steps) -->
 <div id="pipe-modal">
   <div id="pipe-inner">
-    <div class="glass" style="padding:22px 26px;display:flex;align-items:center;gap:14px">
-      <h2 style="margin:0;font-size:19px">Run the check</h2>
+    <div class="glass pipe-head">
+      <h2 id="pipe-title">Run QA/QC</h2>
       <span style="flex:1"></span>
-      <button id="btn-run-all" class="primary">▶ Run everything</button>
       <button class="mini" id="btn-pipe-close">✕ Close</button>
     </div>
-    <div id="pipe-steps"></div>
+    <div id="pipe-body"></div>
   </div>
 </div>
 
