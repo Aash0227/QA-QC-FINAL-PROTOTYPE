@@ -453,3 +453,19 @@ button:disabled:hover{border-color:var(--line);color:var(--txt);transform:none}
   #pm-grid{grid-template-columns:1fr}
   .pm-head{flex-wrap:wrap}
 }
+
+/* ── GLASS LAYER (UI transform: translucent + blur everywhere) ── */
+header,
+#list-panel,#list-wrap,#pdf-panel,#sheet-panel,
+#project-card,#chat-drawer,#pipe-modal,
+#bmwizard,#bm-cards,#bm-log,
+#setting-panel,.drawer,
+.ai-card,.chat-card,.cat-hdr,.badge{backdrop-filter:blur(14px) saturate(1.2);-webkit-backdrop-filter:blur(14px) saturate(1.2)}
+header{background:rgba(22,24,29,.55) !important;border-bottom:1px solid rgba(255,255,255,.08)}
+#list-panel,#list-wrap{background:rgba(20,23,28,.45)}
+#pdf-panel{background:rgba(10,15,28,.6)}
+#project-card,#chat-drawer,#pipe-modal,#bmwizard{background:rgba(18,22,28,.55);border:1px solid rgba(255,255,255,.07)}
+.ai-card{background:rgba(13,26,46,.55);border:1px solid rgba(30,58,95,.6)}
+.cat-hdr{background:rgba(30,41,59,.35)}
+.badge{background:rgba(20,23,28,.5)}
+@media(prefers-reduced-motion:reduce){.badge,.ai-card{backdrop-filter:none}}

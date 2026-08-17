@@ -5,6 +5,8 @@ import {
 
 import { cn } from "@/lib/utils";
 
+import { AiText } from "./AiText";
+
 import type { IslandStep } from "./types";
 
 const STATUS_ICON: Record<IslandStep["status"], React.ReactNode> = {
@@ -121,15 +123,7 @@ export const StepRow = memo(function StepRow({
                     <Loader2 className="h-3 w-3 animate-spin" /> AI explanation pending…
                   </div>
                 )}
-                {step.aiText && (
-                  <div className="rounded-md border border-primary/20 bg-primary/5 p-3 text-xs text-foreground/80 leading-relaxed">
-                    <span className="font-medium text-primary">AI: </span>
-                    {step.aiText}
-                    {step.aiSource === "deterministic" && (
-                      <span className="ml-1 text-muted-foreground">(offline fallback)</span>
-                    )}
-                  </div>
-                )}
+                {step.aiText && <AiText text={step.aiText} source={step.aiSource} />}
 
                 {/* technical details panel */}
                 {step.artifact && (

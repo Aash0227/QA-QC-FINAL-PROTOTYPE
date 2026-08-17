@@ -101,6 +101,14 @@ export function usePipeline(): PipelineIslandState {
     if (events.length === 0) return;
     setDebugRawEvents((prev) => [...prev.slice(-99), events[events.length - 1]]);
     const latest = events[events.length - 1];
+    // Auto-AI after a step is done — look up the stage title from the
+    // authoritative run state (survives the race where events arrive before
+    // `run` populates the `steps` list).
+    if (latest.kind === "done") {
+      const title = run?.stages?.find((s) => s.key === latest.step)?.title
+                     ?? latest.step;
+      void requestAiFor(latest.step, title);
+    }
     setSteps((prev) => {
       const idx = prev.findIndex((s) => s.id === latest.step);
       if (idx === -1) return prev;
@@ -111,18 +119,13 @@ export function usePipeline(): PipelineIslandState {
           : latest.kind === "done" ? "done"
           : latest.kind === "error" ? "failed"
           : latest.kind === "skip" ? "skipped"
-          : "running", // fallback — preserve current kind from backend when known
+          : "running",
         );
         return { ...s, status: newStatus, message: latest.message };
       });
-      // Auto-AI after a step is done
-      const changed = updated[idx];
-      if (latest.kind === "done") {
-        void requestAiFor(changed.id, changed.title);
-      }
       return updated;
     });
-  }, [events, requestAiFor]);
+  }, [events, requestAiFor, run]);
 
   // ── Poll fallback when SSE is disconnected ─────────────────────────
   useEffect(() => {

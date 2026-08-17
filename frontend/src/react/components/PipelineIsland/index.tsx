@@ -25,7 +25,7 @@ export default function PipelineIsland() {
     <KineticGrid paused={gridPaused}>
       <div className="flex flex-col min-h-screen">
         {/* ── HEADER ──────────────────────────────────────────────── */}
-        <header className="flex items-center justify-between border-b border-border/50 bg-background/80 backdrop-blur px-5 py-3 z-20">
+        <header className="flex items-center justify-between border-b border-white/8 bg-background/50 backdrop-blur-md px-5 py-3 z-20">
           <div className="flex items-center gap-3">
             <img src={logo} alt="Livio" className="h-7 w-auto" />
             <div className="h-5 w-px bg-border/50" />
