@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { ChevronDown, ChevronRight, BrainCircuit, Loader2, Bug } from "lucide-react";
 
-import logo from "@/assets/livio-logo-dark.png";
+import logo from "@/assets/livio-logo-white.png";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";

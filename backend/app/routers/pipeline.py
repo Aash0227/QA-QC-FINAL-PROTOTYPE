@@ -6,6 +6,7 @@ only orchestrates artifacts."""
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -23,11 +24,14 @@ from .. import (
     pdf_convert,
     pdf_intelligence,
     phase_summary,
+    profile,
     progress,
     registration,
     revit_convert,
     revit_v3_adapter,
+    run_engine,
     scene3d,
+    stage_graph,
     teach,
     wall_match,
 )
@@ -51,7 +55,7 @@ MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50MB
 def _uploaded_pdf() -> Path:
     # Function (not module constant): ARTIFACT_DIR changes when the active
     # project switches, so the path must resolve at call time.
-    return config.ARTIFACT_DIR / "uploaded_madera.pdf"
+    return config.ARTIFACT_DIR / "input.pdf"
 
 
 def _spec_map_with_fallback(ei: dict[str, Any] | None) -> dict[str, str]:
@@ -166,34 +170,52 @@ async def revit_ai_convert(
 # PDF Page Intelligence
 # ---------------------------------------------------------------------------
 @router.post("/api/pdf/page-intelligence")
-async def pdf_page_intelligence(
+def pdf_page_intelligence(
     file: UploadFile | None = File(default=None),
     use_sample: bool = Query(default=False),
     use_saved: bool = Query(default=False),
 ) -> JSONResponse:
+    # GENERIC-FIRST: the generalized detector is the default for every project.
+    # The frozen S-201/Madera focused detector runs ONLY when the project
+    # manifest declares detection_profile == "madera" (explicit opt-in).
     if use_saved:
-        result = pdf_intelligence.run_page_intelligence(project_pdf_path())
-        source = "s201_focused"
-        if result.get("error"):
-            # Not an S-201/H1-H4 drawing set: derive sheet + mark family from
-            # the generalized extraction instead (frozen path stays default).
+        if profile.detection_profile() == "madera":
+            result = pdf_intelligence.run_page_intelligence(project_pdf_path())
+            source = "s201_focused"
+            if result.get("error"):
+                # Focused detector declined (no S-201 page) — fall back to
+                # generic rather than reporting a hard failure.
+                ei_path = config.artifact_path("element_intelligence")
+                if ei_path.exists():
+                    from ..generic_page_intelligence import run_generic_page_intelligence
+                    ei = json.loads(ei_path.read_text(encoding="utf-8"))
+                    result = run_generic_page_intelligence(project_pdf_path(), ei)
+                    source = "generic"
+        else:
             ei_path = config.artifact_path("element_intelligence")
-            if ei_path.exists():
+            if not ei_path.exists():
+                result = {
+                    "schema_version": "pdf-page-intelligence/1.0",
+                    "source_file": str(project_pdf_path()),
+                    "sheet_number": None, "page_index": None,
+                    "error": "element_intelligence.json missing — run extraction first.",
+                    "holdowns": [], "summary": {"total": 0, "by_type": {}},
+                }
+                source = "generic"
+            else:
                 from ..generic_page_intelligence import run_generic_page_intelligence
-
                 ei = json.loads(ei_path.read_text(encoding="utf-8"))
                 result = run_generic_page_intelligence(project_pdf_path(), ei)
                 source = "generic"
-        # Doc-21 #4: which detector actually produced this artifact. Additive
-        # only — path SELECTION is unchanged; this just makes a garbage-in
-        # result diagnosable after the fact.
+        # Which detector actually produced this artifact (Doc-21 #4).
         result["intelligence_source"] = source
         save_artifact("pdf_page_intelligence", result)
         return JSONResponse(result)
     if file is not None:
         if file.size and file.size > MAX_UPLOAD_BYTES:
             raise HTTPException(status_code=413, detail="File too large")
-        pdf_bytes = await file.read()
+        # sync handler (def) runs in the threadpool — read via the raw file handle
+        pdf_bytes = file.file.read()
         if len(pdf_bytes) > MAX_UPLOAD_BYTES:
             raise HTTPException(status_code=413, detail="File too large")
         pdf_path = _uploaded_pdf()
@@ -208,10 +230,22 @@ async def pdf_page_intelligence(
             status_code=400, detail="Provide a PDF upload or set use_sample=true."
         )
 
-    result = pdf_intelligence.run_page_intelligence(pdf_path)
-    # Direct-upload branch has no element_intelligence to fall back to, so the
-    # frozen S-201 detector is always what ran here.
-    result["intelligence_source"] = "s201_focused"
+    # Direct-upload branch: the generalized detector needs element_intelligence
+    # (extract runs first in the orchestrated pipeline). Without it, only an
+    # explicit Madera profile may use the focused detector — otherwise report
+    # honestly instead of pretending the frozen detector can run on anything.
+    if profile.detection_profile() == "madera":
+        result = pdf_intelligence.run_page_intelligence(pdf_path)
+        result["intelligence_source"] = "s201_focused"
+    else:
+        result = {
+            "schema_version": "pdf-page-intelligence/1.0",
+            "source_file": str(pdf_path),
+            "sheet_number": None, "page_index": None,
+            "error": "Run extraction first (element_intelligence required for generic detection).",
+            "holdowns": [], "summary": {"total": 0, "by_type": {}},
+            "intelligence_source": "generic",
+        }
     save_artifact("pdf_page_intelligence", result)
     return JSONResponse(result)
 
@@ -410,10 +444,12 @@ def elements_match() -> JSONResponse:
         json.loads(compare_path.read_text(encoding="utf-8")) if compare_path.exists() else None
     )
     page_intel_path = config.artifact_path("pdf_page_intelligence")
-    compare_sheet = "S-201"
+    # The compare sheet is whichever sheet page-intelligence detected — never
+    # a hardcoded drawing number. None means "no global-calibration sheet".
+    compare_sheet = None
     if page_intel_path.exists():
         compare_sheet = json.loads(page_intel_path.read_text(encoding="utf-8")).get(
-            "sheet_number", "S-201"
+            "sheet_number"
         )
 
     wall_reports: dict[str, dict[str, Any]] = {}
@@ -468,6 +504,14 @@ def elements_match() -> JSONResponse:
         registration_notes[sheet_number] = "unregistered"
         return None
 
+    # One PDF open for the whole loop, not one per sheet (perf audit 5a).
+    _pdf_doc = None
+    try:
+        import fitz
+        _pdf_doc = fitz.open(project_pdf_path())
+    except Exception:
+        _pdf_doc = None
+
     for sheet in ei.get("sheets", []):
         sheet_number = sheet["sheet_number"]
         sw_marks = [m for m in sheet.get("marks", []) if m["category"] == "shear_wall"]
@@ -490,12 +534,9 @@ def elements_match() -> JSONResponse:
             # bubble hangs on a leader; the tip is the physical reference.
             segments = None
             try:
-                import fitz
-
-                with fitz.open(project_pdf_path()) as _doc:
-                    segments = wall_match.extract_leader_segments(
-                        _doc[sheet["page_index"]]
-                    )
+                segments = wall_match.extract_leader_segments(
+                    _pdf_doc[sheet["page_index"]]
+                )
             except Exception:
                 segments = None  # anchors stay bubbles — never blocks matching
             wall_reports[sheet_number] = wall_match.match_shear_walls(
@@ -643,6 +684,11 @@ def elements_match() -> JSONResponse:
     save_artifact("scene3d", scene3d.build_scene(raw_revit, result, ai_revit))
     systematic, sampled = phase_summary.count_systematic(result, device_registry)
     phase_summary.record("match", phase_summary.match(result, systematic, sampled))
+    if _pdf_doc is not None:
+        try:
+            _pdf_doc.close()
+        except Exception:
+            pass  # never fail the run on cleanup
     return JSONResponse(result)
 
 
@@ -713,3 +759,160 @@ def pipeline_status() -> JSONResponse:
             "memory_rules": len(teach.load_memory()["entries"]),
         }
     )
+
+
+# ---------------------------------------------------------------------------
+# One-button orchestrated run + AI status (production pipeline UX)
+# ---------------------------------------------------------------------------
+# Stage definitions moved to app/stage_graph.py (single source of truth,
+# shared with the invalidation hook). Re-export for backward compatibility.
+PIPELINE_STAGES = stage_graph.STAGES
+
+
+def _artifact_present(keys: tuple[str, ...]) -> bool:
+    return stage_graph.artifact_present(keys)
+
+
+def _run_stage(key: str) -> dict[str, Any]:
+    """Execute one pipeline stage by calling its existing handler (used by the
+    background run engine)."""
+    import asyncio
+    if key == "extract":
+        elements_extract()
+    elif key == "revit_convert":
+        asyncio.run(revit_ai_convert(use_saved=True))
+    elif key == "pdf_intelligence":
+        asyncio.run(pdf_page_intelligence(use_saved=True))
+    elif key == "pdf_convert":
+        pdf_ai_convert()
+    elif key == "ransac":
+        from .registration import registration_auto_holdown
+        registration_auto_holdown()
+    elif key == "compare":
+        compare_ai()
+    elif key == "match":
+        elements_match()
+    else:
+        raise ValueError(f"unknown stage {key}")
+    return {}
+
+
+@router.post("/api/pipeline/run")
+def pipeline_run(force: bool = Query(default=False)) -> JSONResponse:
+    """Start the QA/QC pipeline in the BACKGROUND and return immediately.
+
+    - Returns 202 with the initial run state.
+    - Returns 409 if a run is already in flight for this project (the run_id
+      is included so the caller can poll the existing run instead).
+    - force=true deletes every stage artifact first so nothing stale survives.
+
+    Progress is emitted on GET /api/pipeline/events (SSE); the persisted run
+    state is readable via GET /api/pipeline/run at any time."""
+    try:
+        state = run_engine.start_run(force=force)
+    except HTTPException:
+        raise
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return JSONResponse(state, status_code=202)
+
+
+@router.get("/api/pipeline/run")
+def pipeline_run_state() -> JSONResponse:
+    """Current or most recent persisted run state for this project, or 404."""
+    state = run_engine.run_state()
+    if state is None:
+        raise HTTPException(status_code=404, detail="No pipeline run yet for this project.")
+    return JSONResponse(state)
+
+
+# Cheap/fast model for AI status — never blocks the pipeline.
+AI_STATUS_MODEL = os.environ.get("QAQC_AI_STATUS_MODEL", "x-ai/grok-4.20")
+
+
+@router.post("/api/pipeline/ai-status")
+def pipeline_ai_status(payload: dict[str, Any] = Body(...)) -> JSONResponse:
+    """AI summary of a completed stage. Non-blocking by contract: the
+    caller fire-and-forgets it, and on any OpenRouter failure we return a
+    deterministic fallback string instead of an error. AI communicates state;
+    it never controls orchestration."""
+    stage = (payload or {}).get("stage", "")
+    title = (payload or {}).get("title", stage)
+    duration = (payload or {}).get("duration_s")
+    counts = (payload or {}).get("output_counts")
+    fallback = _deterministic_status(stage, title, duration, counts)
+    try:
+        if not config.OPENROUTER_API_KEY:
+            return JSONResponse({"text": fallback, "source": "deterministic"})
+        from ..openrouter import call_llm
+        detail_parts = [f"Stage: {title}"]
+        if duration:
+            detail_parts.append(f"Completed in {duration:.1f}s")
+        if counts:
+            detail_parts.append(f"Output: {counts}")
+        user_prompt = ". ".join(detail_parts) + "."
+        status = call_llm(
+            system_prompt=(
+                "You are a structural QA/QC pipeline commentator. For each completed "
+                "pipeline stage, write 2-4 sentences explaining: (1) what the stage did, "
+                "(2) what data it produced, (3) what happens next. Be specific and "
+                "technical but plain-English. Never invent numbers or filenames. "
+                "Keep it under 60 words."),
+            user_prompt=user_prompt,
+            purpose="pipeline_ai_status",
+            json_mode=False,
+            max_tokens=200,
+            temperature=0.4,
+            timeout=15.0,
+        )
+        text = (status.get("content") or "").strip()
+        if status.get("ok") and text:
+            return JSONResponse({"text": text, "source": "ai"})
+        return JSONResponse({"text": fallback, "source": "deterministic"})
+    except Exception:  # noqa: BLE001 — optional path must never fail the run
+        return JSONResponse({"text": fallback, "source": "deterministic"})
+
+
+def _deterministic_status(stage: str, title: str, duration: float | None = None, counts: dict | None = None) -> str:
+    details = {
+        "extract": (
+            "Scanned every sheet in the drawing set for structural elements — hold-downs, "
+            "shear walls, posts, and steel columns. Each mark was located on the page and "
+            "classified by type. The Revit model is needed next to start cross-referencing."
+        ),
+        "revit_convert": (
+            "Parsed the Revit JSON export and built an in-memory model of every structural "
+            "element with its position, family, and type. The next step is to locate the "
+            "correct sheet in the PDF to begin coordinate alignment."
+        ),
+        "pdf_intelligence": (
+            "Identified the structural plan sheet and extracted page-level metadata — sheet "
+            "number, scale, and title block. This grounds the coordinate system so the "
+            "drawing data can be prepared for RANSAC alignment."
+        ),
+        "pdf_convert": (
+            "Converted the PDF page into a coordinate space suitable for matching. Every "
+            "detected element now has a position in drawing inches. RANSAC alignment will "
+            "register this against the Revit model next."
+        ),
+        "ransac": (
+            "Ran RANSAC registration to align the drawing coordinate system with the Revit "
+            "model. The transform is now solved — every drawing element can be projected "
+            "into model space for direct comparison."
+        ),
+        "compare": (
+            "Compared each PDF element against its nearest Revit counterpart using the "
+            "aligned coordinates. Matches, location mismatches, and vocabulary gaps were "
+            "classified. The review queue is being assembled from these verdicts."
+        ),
+        "match": (
+            "Finalised the review queue with all element verdicts. Verified items are "
+            "closed out; mismatches and gaps are flagged for engineer review. The pipeline "
+            "is complete — results are ready in the dashboard."
+        ),
+    }
+    text = details.get(stage, f"{title} complete. Proceeding to the next stage.")
+    if duration:
+        text += f" ({duration:.1f}s)"
+    return text
+

@@ -8,11 +8,11 @@
 
 @theme {
   /* ── surfaces (dark-only) ─────────────────────────────── */
-  --color-background: #161618;
+  --color-background: rgba(22, 22, 24, 0.6);
   --color-foreground: #f4f4f5;
-  --color-card: #1d1d20;
+  --color-card: rgba(29, 29, 32, 0.45);
   --color-card-foreground: #f4f4f5;
-  --color-popover: #1d1d20;
+  --color-popover: rgba(29, 29, 32, 0.55);
   --color-popover-foreground: #f4f4f5;
   --color-primary: #06adf5; /* Livio blue */
   --color-primary-foreground: #06131a;
