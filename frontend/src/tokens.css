@@ -1,4 +1,7 @@
 /* tokens.css — THE design system (production-plan §7).
+   The three font families named below are self-hosted and bundled by src/fonts.js
+   (a CSS @import of a bare package specifier is not resolved by Vite's postcss
+   pass, so the @font-face rules are pulled in from JS instead).
    Single source of truth for color + type. The Autopilot/report aesthetic is
    now the app aesthetic: ink canvas, IBM Plex body/mono, Big Shoulders display,
    signal-teal accent, markup-orange for corrections.
@@ -20,7 +23,7 @@
 
   /* ---- app aliases (historical names, same values — behaviour-preserving) ---- */
   --bg:var(--ink);
-  --panel:rgba(20,23,28,.82);   /* translucent glass — the app's panel treatment */
+  --panel:rgba(20,23,28,.45);   /* glass at ~55% transparent — kinetic bg visible through */
   --txt:var(--paper);
   --accent:var(--signal);
 
