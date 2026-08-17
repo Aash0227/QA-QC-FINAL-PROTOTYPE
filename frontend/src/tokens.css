@@ -23,7 +23,7 @@
 
   /* ---- app aliases (historical names, same values — behaviour-preserving) ---- */
   --bg:var(--ink);
-  --panel:rgba(20,23,28,.45);   /* glass at ~55% transparent — kinetic bg visible through */
+  --panel:rgba(20,23,28,.35);   /* glass at ~65% transparent — kinetic bg clearly visible */
   --txt:var(--paper);
   --accent:var(--signal);
 
