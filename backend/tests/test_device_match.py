@@ -195,3 +195,37 @@ def test_run_end_to_end_matches_wall_and_holdown_categories():
     hd = reg["categories"]["holdown"]
     assert hd["summary"]["physical_devices"] == 1
     assert hd["devices"][0]["status"] == "MATCH"
+
+
+# ------------------------------------------- Gate: Shear Wall anchor fix
+
+def test_shear_wall_uses_leader_corrected_anchor_not_raw_bubble():
+    """wall_match.py hangs a SW callout bubble off the wall on a leader line
+    and corrects for it (the bubble is not the physical reference, the
+    leader tip is) -- but the fix landed only in wall_match's OWN verdict.
+    element_registry passed the raw bubble point through as the row's
+    pdf_point, and device_match re-projected THAT for the authoritative
+    device-level verdict, silently discarding the correction. A bubble
+    parked far from its wall with a leader that lands right on the wall
+    must still MATCH at the device level, using match_anchor_pdf -- not
+    fall back to a false PDF_ONLY/LOCATION_MISMATCH from the raw bubble."""
+    bubble_far = _pdf_point_for(30, 30)       # nowhere near the wall
+    leader_tip_on_wall = _pdf_point_for(10, 10.1)  # right next to the target
+    row = {"id": "s1_sw1_a", "sheet": "S1", "category": "shear_wall",
+           "mark": "SW-1", "status": "LOCATION_MISMATCH",
+           "pdf_point": bubble_far, "match_anchor_pdf": leader_tip_on_wall}
+    walls = [{"id": "wall_1", "type_name": "X SW1",
+              "centerline": [[10.0, 5.0], [10.0, 15.0]]}]
+    reg = dm.run([row], CALS, [], walls=walls)
+    sw = reg["categories"]["shear_wall"]
+    assert sw["summary"]["physical_devices"] == 1, sw["summary"]
+    dev = sw["devices"][0]
+    assert dev["status"] == "MATCH", dev  # would be PDF_ONLY/MISMATCH on the raw bubble
+
+    # Sanity: without match_anchor_pdf (older row shape / no leader found),
+    # falling back to the raw bubble is honest -- it should NOT match.
+    row_no_anchor = dict(row)
+    del row_no_anchor["match_anchor_pdf"]
+    reg2 = dm.run([row_no_anchor], CALS, [], walls=walls)
+    dev2 = reg2["categories"]["shear_wall"]["devices"][0]
+    assert dev2["status"] != "MATCH", dev2

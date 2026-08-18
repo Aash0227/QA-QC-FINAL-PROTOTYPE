@@ -120,6 +120,14 @@ def build_element_list(
                     "sheet": sheet_number,
                     "page_index": page_index,
                     "pdf_point": row.get("pdf_point"),
+                    # wall_match's leader-tip-corrected anchor (bubble-hangs-
+                    # off-a-leader case) -- kept separate from pdf_point so
+                    # the UI still draws the pin at the callout bubble, but
+                    # device_match's re-projection (Gate: Shear Wall) can use
+                    # the same physically-corrected point wall_match already
+                    # determined was more reliable, instead of silently
+                    # reverting to the raw bubble position.
+                    "match_anchor_pdf": row.get("anchor_point_pdf") or row.get("pdf_point"),
                     "bbox_pdf": _mark_bbox(sheets_meta.get(sheet_number), row["pdf_mark_id"]),
                     "spec": vocab_specs.get(("shear_wall", row["mark"])),
                     "status": row["verdict"],

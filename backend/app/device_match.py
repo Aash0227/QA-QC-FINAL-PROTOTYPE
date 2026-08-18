@@ -151,8 +151,16 @@ def run(element_rows: list[dict[str, Any]],
                   HOLDOWN_ADAPTER)
 
     # --- shear walls (segment targets)
-    sw_rows = [r for r in element_rows if r.get("category") == "shear_wall"
-               and r.get("pdf_point")]
+    # Gate: Shear Wall -- prefer wall_match's leader-tip-corrected anchor
+    # (match_anchor_pdf) over the raw callout-bubble pdf_point when present,
+    # so the physical-device re-projection doesn't silently discard the
+    # correction wall_match already computed. Falls back to pdf_point for
+    # rows that predate this field (or never had a leader to correct).
+    sw_rows = [
+        {**r, "pdf_point": r.get("match_anchor_pdf") or r.get("pdf_point")}
+        for r in element_rows
+        if r.get("category") == "shear_wall" and r.get("pdf_point")
+    ]
     wall_targets = []
     for w in walls:
         tok = sw_token(w.get("type_name") or "")
