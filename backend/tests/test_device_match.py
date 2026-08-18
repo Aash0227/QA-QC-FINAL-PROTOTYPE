@@ -383,3 +383,30 @@ def test_holdown_adapter_has_no_orientation_channel():
     the validated Gate 3 behavior must stay untouched."""
     assert dm.HOLDOWN_ADAPTER.orientation_tolerance_deg is None
     assert dm.SHEAR_WALL_ADAPTER.orientation_tolerance_deg == 20.0
+
+
+def test_unpaired_callout_still_carries_drawn_orientation():
+    """Coverage fix: drawn orientation is a property of the CALLOUT and the
+    drawing, not of a Revit pairing. It was first attached only inside
+    wall_match's matched-candidate loop, so unpaired (PDF_ONLY) callouts --
+    the majority on a real sheet -- silently carried no orientation at all
+    and the evidence channel could never see them."""
+    from app import wall_match as wm
+
+    identity_cal = {
+        "calibration_source": "manual_verified",
+        "transform": {"matrix": [1, 0, 0, 1, 0, 0],
+                      "inverse_matrix": [1, 0, 0, 1, 0, 0]},
+        "quality": {"match_allowed": True, "confidence": "high"},
+    }
+    # One callout with NO same-token Revit wall anywhere -> PDF_ONLY.
+    marks = [{"id": "m_lonely", "category": "shear_wall", "mark": "SW-9",
+              "center_pdf": [100, 100]}]
+    # A drawn run right beside it: a vertical band of short hatch ticks.
+    runs = [{"segment": ((105.0, 60.0), (105.0, 140.0)),
+             "length_pt": 80.0, "angle_deg": 90.0, "tick_count": 40}]
+    rep = wm.match_shear_walls(marks, [], identity_cal, wall_runs=runs)
+    row = rep["rows"][0]
+    assert row["verdict"] == "PDF_ONLY", row
+    assert row.get("orientation_deg") is not None, row
+    assert abs(row["orientation_deg"] - 90.0) < 1.0, row

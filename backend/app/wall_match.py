@@ -141,6 +141,36 @@ def drawn_wall_orientation_deg(
     return math.degrees(math.atan2(q[1] - p[1], q[0] - p[0])) % 180.0
 
 
+def drawn_wall_orientation_for_anchors(
+    anchors: list[tuple[str, tuple[float, float]]],
+    wall_runs: list[dict[str, Any]] | None,
+    inverse_matrix: list[float] | None,
+    max_distance_pt: float = 45.0,
+) -> float | None:
+    """Drawn-wall direction for a callout, trying EVERY anchor it has.
+
+    A callout's bubble is often parked well off the wall while its leader tip
+    lands on it (or vice-versa), so scanning all anchors and keeping the run
+    nearest to any of them finds the drawn wall far more often than testing
+    the bubble alone -- without enlarging the per-anchor search radius, which
+    would risk picking up a neighbouring wall."""
+    best: tuple[float, float] | None = None
+    for _method, pt in anchors:
+        run = None
+        if wall_runs:
+            from . import pdf_wall_geometry
+            run = pdf_wall_geometry.nearest_run(wall_runs, pt, max_distance_pt)
+        if run is None:
+            continue
+        deg = drawn_wall_orientation_deg(pt, wall_runs, inverse_matrix,
+                                         max_distance_pt)
+        if deg is None:
+            continue
+        if best is None or run["anchor_distance_pt"] < best[0]:
+            best = (run["anchor_distance_pt"], deg)
+    return None if best is None else best[1]
+
+
 def match_shear_walls(
     sheet_marks: list[dict[str, Any]],
     revit_walls: list[dict[str, Any]],
@@ -190,6 +220,17 @@ def match_shear_walls(
             anchors += [("leader_tip", t) for t in leader_tips(c["point"], leader_segments)]
         anchors_by_callout.append(anchors)
 
+    # Drawn-wall orientation is a property of the CALLOUT and the drawing --
+    # it does not depend on whether a Revit candidate was found. Computing it
+    # per callout (rather than only inside the matched-pair loop, as it was
+    # first written) means unpaired PDF_ONLY callouts carry it too, so the
+    # evidence is available to every downstream consumer.
+    inv_matrix = ((calibration or {}).get("transform") or {}).get("inverse_matrix")
+    orientation_by_callout = [
+        drawn_wall_orientation_for_anchors(anchors, wall_runs, inv_matrix)
+        for anchors in anchors_by_callout
+    ]
+
     candidates: list[tuple[float, int, int, str, tuple[float, float]]] = []
     for ci, c in enumerate(callouts):
         for wi, w in enumerate(walls_pdf):
@@ -232,20 +273,20 @@ def match_shear_walls(
         row["anchor_method"] = anchor_method
         row["anchor_point_pdf"] = [round(anchor_pt[0], 2), round(anchor_pt[1], 2)]
         # PDF-side measured evidence: the direction of the wall actually
-        # drawn at this anchor. Consumed downstream as a tie-breaker between
+        # drawn at this callout. Consumed downstream as a tie-breaker between
         # otherwise-equidistant same-mark candidates.
-        drawn_deg = drawn_wall_orientation_deg(
-            anchor_pt, wall_runs,
-            ((calibration or {}).get("transform") or {}).get("inverse_matrix"))
-        if drawn_deg is not None:
-            row["orientation_deg"] = round(drawn_deg, 1)
+        if orientation_by_callout[ci] is not None:
+            row["orientation_deg"] = round(orientation_by_callout[ci], 1)
         rows.append(row)
 
     for ci, c in enumerate(callouts):
         if ci not in used_c:
-            rows.append(_row(c, None, None, "PDF_ONLY",
-                             f"No {c['mark']} wall centerline within "
-                             f"{SW_LOCATION_MISMATCH_MAX_PT:.0f}pt."))
+            row = _row(c, None, None, "PDF_ONLY",
+                       f"No {c['mark']} wall centerline within "
+                       f"{SW_LOCATION_MISMATCH_MAX_PT:.0f}pt.")
+            if orientation_by_callout[ci] is not None:
+                row["orientation_deg"] = round(orientation_by_callout[ci], 1)
+            rows.append(row)
     matched_wall_ids = {r["revit_wall_id"] for r in rows if r["revit_wall_id"]}
     return _report(rows, walls, matched_wall_ids, usable)
 
