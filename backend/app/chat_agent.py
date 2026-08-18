@@ -35,19 +35,34 @@ class ChatUnavailable(RuntimeError):
     """Raised when the LLM cannot be reached (e.g. no OPENROUTER_API_KEY)."""
 
 SYSTEM_PROMPT = (
-    "You are the QA-QC copilot for a structural drawing review app. You answer "
-    "questions about the compared PDF-vs-Revit element inventory and you ACT on "
-    "the UI through tools. Use the tools to fetch real data — never invent counts "
-    "or statuses. Categories are: holdown, shear_wall, post, steel_column, "
-    "wall_type. Statuses include MATCH, LOCATION_MISMATCH, PDF_ONLY, REVIT_ONLY, "
-    "SPEC_ONLY, NO_REVIT_DATA, NOT_EVALUATED. Tool results are rendered as visual "
-    "blocks (count cards, tables, status breakdowns) and UI actions (highlighting "
-    "an element, filtering the list, opening the table) automatically — so keep "
-    "your final reply short and human, and do NOT paste raw JSON. When the user "
-    "asks 'how many X', call get_counts and query_elements(category=X). When they "
-    "point at a specific element, call focus_element so every pane flies to it. "
-    "To record a client's non-standard drawing convention (e.g. 'HD3 means H3'), "
-    "or to exclude a mark entirely ('ignore H6'), call save_teach_rule."
+    "You are the QBC QA/QC Agent. You help a structural QA/QC engineer verify "
+    "that a Revit model matches the structural drawings, and you act on the UI "
+    "through tools. "
+    "THE VERDICTS a reviewer sees are LOCATION_MATCH (drawing and model agree "
+    "on where this element is), LOCATION_MISMATCH (an established discrepancy: "
+    "wrong place, wrong mark, drawn-but-not-modelled, or modelled-but-not-"
+    "drawn), NEEDS_REVIEW (the engine tried and could not settle it, usually "
+    "two candidates it refused to guess between), and NOT_APPLICABLE (out of "
+    "scope: the model export never included that category, so no verdict is "
+    "possible). Categories: holdown, shear_wall, post, steel_column, wall_type. "
+    "HOW TO ANSWER: never invent counts, statuses, distances or element ids. "
+    "Always call a tool and answer from what it returns. When the user asks WHY "
+    "a result is what it is, call explain_element: it returns the actual "
+    "evidence, the Revit element chosen, the distance, which evidence channel "
+    "decided it, candidates that were ruled out, and the registration quality "
+    "that gated the decision. When they ask what happened during the run, call "
+    "get_pipeline_story. For how many X, call get_counts and "
+    "query_elements(category=X). When they point at a specific element, call "
+    "focus_element so every pane flies to it. To record a client non-standard "
+    "drawing convention (HD3 means H3) or to exclude a mark (ignore H6), call "
+    "save_teach_rule. "
+    "STYLE: lead with the answer in one sentence, in plain engineering language "
+    "a QA reviewer would use. Add detail only when it helps them act: which "
+    "sheet to open, which element to check, what to look for. Tool results "
+    "render as visual blocks and UI actions automatically, so keep the reply "
+    "short and never paste raw JSON. If the evidence genuinely does not settle "
+    "something, say so plainly and say what would settle it; never manufacture "
+    "confidence."
 )
 
 
@@ -166,6 +181,36 @@ TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "explain_element",
+            "description": (
+                "Full evidence behind ONE element's verdict: why it is "
+                "LOCATION_MATCH / LOCATION_MISMATCH / NEEDS_REVIEW, which "
+                "Revit element was chosen, the distance, which evidence "
+                "channel decided it, competing candidates that were ruled "
+                "out, the registration quality that gated it, and any "
+                "recorded evidence conflict. Call this whenever the user "
+                "asks WHY a result is what it is."),
+            "parameters": {"type": "object", "properties": {
+                "element_id": {"type": "string",
+                               "description": "Element id, or a mark like H2/SW-1."}},
+                "required": ["element_id"]},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_pipeline_story",
+            "description": (
+                "What each pipeline stage actually did on this project, in "
+                "plain English, from the recorded per-stage summaries. Call "
+                "this when the user asks what happened during the run, or "
+                "why there is no result yet."),
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "focus_element",
             "description": "Highlight one element across every pane (returns a select ui_action).",
             "parameters": {
@@ -199,7 +244,13 @@ _ROW_COLS = ("mark", "category", "sheet", "status", "distance_ft")
 
 
 def _row_view(e: dict[str, Any]) -> dict[str, Any]:
-    return {c: e.get(c) for c in _ROW_COLS} | {"id": e.get("id")}
+    view = {c: e.get(c) for c in _ROW_COLS} | {"id": e.get("id")}
+    # The product verdict is what the reviewer sees on screen, so the agent
+    # must reason in the same vocabulary, not only the internal status.
+    product = e.get("product") or {}
+    if product.get("verdict"):
+        view["verdict"] = product["verdict"]
+    return view
 
 
 # ---------------------------------------------------------------------------
@@ -357,6 +408,64 @@ def _tool_save_teach_rule(instruction: str | None = None, **_: Any) -> dict[str,
     return {"data": {"reply": res.get("reply"), "saved": bool(entry), "rule_id": (entry or {}).get("id"), "needs_clarification": res.get("needs_clarification", False)}}
 
 
+def _tool_explain_element(element_id: str | None = None, **_: Any) -> dict[str, Any]:
+    """Everything behind one verdict, assembled from artifacts only.
+
+    The agent must never speculate about why a match happened; this hands it
+    the evidence the engine actually recorded, including the candidates it
+    refused and the registration that gated the decision."""
+    if not element_id:
+        return {"data": {"error": "Provide an element id or mark."}}
+    rows = _elements()
+    needle = str(element_id).strip().lower()
+    row = next((e for e in rows if str(e.get("id", "")).lower() == needle), None)
+    if row is None:
+        hits = [e for e in rows if str(e.get("mark", "")).lower() == needle]
+        if not hits:
+            return {"data": {"error": f"No element matching {element_id!r}."}}
+        if len(hits) > 1:
+            return {"data": {
+                "ambiguous_reference": element_id,
+                "candidates": [_row_view(e) for e in hits[:10]],
+                "note": ("That mark covers several elements - ask about a "
+                         "specific id from this list.")}}
+        row = hits[0]
+
+    product = row.get("product") or {}
+    out: dict[str, Any] = {
+        "id": row.get("id"),
+        "verdict": product.get("verdict"),
+        "certain": product.get("is_certain"),
+        "in_scope": product.get("in_scope"),
+        "evidence": product.get("evidence") or {
+            "internal_status": row.get("status"), "reason": row.get("reason")},
+    }
+    cal = _load("registration") or {}
+    quality = cal.get("quality") or {}
+    out["registration"] = {
+        "source": cal.get("calibration_source"),
+        "confidence": quality.get("confidence"),
+        "rms_residual_pt": quality.get("solve_rms_residual_pt"),
+        "match_allowed": quality.get("match_allowed"),
+    }
+    for key in ("nearest_revit_candidates", "nearest_pdf_candidates"):
+        if row.get(key):
+            out.setdefault("rejected_candidates", {})[key] = row[key]
+    if row.get("sheet_status") and row.get("sheet_status") != row.get("status"):
+        out["per_sheet_status_before_device_pass"] = row["sheet_status"]
+    return {"data": out,
+            "ui_actions": [{"action": "focus_element", "element_id": row.get("id")}]}
+
+
+def _tool_get_pipeline_story(**_: Any) -> dict[str, Any]:
+    """The recorded per-stage summaries - real text written by the stages."""
+    summaries = _load("phase_summaries") or {}
+    phases = summaries.get("phases") or summaries
+    if not phases:
+        return {"data": {"error": "No pipeline summaries recorded yet."}}
+    return {"data": {"stages": phases}}
+
+
 def _tool_focus_element(element_id: str | None = None, **_: Any) -> dict[str, Any]:
     eid = str(element_id or "")
     found = next((e for e in _elements() if e.get("id") == eid), None)
@@ -381,6 +490,8 @@ TOOL_IMPLS: dict[str, Callable[..., dict[str, Any]]] = {
     "get_workflow_state": _tool_get_workflow_state,
     "run_pipeline_step": _tool_run_pipeline_step,
     "save_teach_rule": _tool_save_teach_rule,
+    "explain_element": _tool_explain_element,
+    "get_pipeline_story": _tool_get_pipeline_story,
     "focus_element": _tool_focus_element,
 }
 
