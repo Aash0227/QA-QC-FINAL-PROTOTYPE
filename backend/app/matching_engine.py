@@ -323,6 +323,35 @@ def _globally_ordered_pairs(devices, targets, config):
     for _mark, (dis, tis) in by_mark.items():
         if not dis or not tis:
             continue
+        # A device whose best candidate is inside its own match gate AND
+        # clear of its runner-up by the ambiguity margin is DECISIVE: its
+        # evidence stands on its own and must never be traded away to lower
+        # the global sum. Minimising total distance is not the same as
+        # maximising per-device correctness -- without this, a device with
+        # no genuine correspondent can take a decisive device's element
+        # (because the swap lowers the sum) and receive a confident, silent,
+        # WRONG match while the rightful owner is demoted. Reproduced before
+        # this guard existed. Decisive pairs are pinned and removed from the
+        # optimisation; the optimiser then resolves only genuine contention.
+        pinned_t: set[int] = set()
+        remaining_d: list[int] = []
+        for di in dis:
+            d = devices[di]
+            ranked = sorted((config.distance(d, targets[ti]), ti) for ti in tis)
+            best_dist, best_ti = ranked[0]
+            gate = d.get("_match_gate_ft", config.match_ft)
+            clear = (len(ranked) == 1
+                     or (ranked[1][0] - best_dist) >= config.ambiguity_margin_ft)
+            if best_dist <= gate and clear and best_ti not in pinned_t:
+                chosen.append((best_dist, di, best_ti))
+                picked.add((di, best_ti))
+                pinned_t.add(best_ti)
+            else:
+                remaining_d.append(di)
+        dis = remaining_d
+        tis = [ti for ti in tis if ti not in pinned_t]
+        if not dis or not tis:
+            continue
         # Pad so rows <= cols; INFEASIBLE keeps out-of-gate pairs from being
         # chosen while leaving the matrix square enough to solve.
         big = config.mismatch_ft * 1000.0
@@ -520,24 +549,41 @@ def sheet_context_consensus(devices: list[dict[str, Any]],
     NEEDS_REVIEW, which is the correct outcome."""
     if not config.context_key:
         return {}
-    votes: dict[str, list[str]] = {}
+    # sheet -> (authoritative votes, weak/corroborating votes)
+    votes: dict[str, tuple[list[str], list[str]]] = {}
     for d in devices:
         # Only confident, unambiguous pairings vote.
         if d.get("_ambiguous") or not d.get("target_id"):
             continue
-        if d.get("status") not in ("MATCH", "LOCATION_MISMATCH"):
+        # Votes are RANKED by how much the engine trusts the pairing. A
+        # gate-passing MATCH is authoritative. A LOCATION_MISMATCH is the
+        # engine's own statement that it does NOT trust the pairing (nearest
+        # same-mark candidate fell outside the match gate), so it may only
+        # CORROBORATE what the authoritative votes already say -- never
+        # outvote them. Without that rank, a few stray pairings against
+        # same-mark elements on another storey flip the consensus and
+        # auto-resolve other devices onto the wrong one; reproduced.
+        status = d.get("status")
+        if status not in ("MATCH", "LOCATION_MISMATCH"):
             continue
         value = (targets_by_id.get(d["target_id"]) or {}).get(config.context_key)
         if value is None:
             continue
         for sheet in d.get("sheets", []):
-            votes.setdefault(sheet, []).append(value)
+            bucket = votes.setdefault(sheet, ([], []))
+            bucket[0 if status == "MATCH" else 1].append(value)
     consensus: dict[str, str] = {}
-    for sheet, values in votes.items():
-        if len(values) < config.context_min_samples:
-            continue
-        top, count = Counter(values).most_common(1)[0]
-        if count / len(values) >= config.context_min_consensus:
+    for sheet, (trusted, weak) in votes.items():
+        if not trusted:
+            continue                     # nothing authoritative to anchor on
+        top, count = Counter(trusted).most_common(1)[0]
+        if count / len(trusted) < config.context_min_consensus:
+            continue                     # authoritative votes disagree
+        # Weak votes count toward the sample floor only where they AGREE
+        # with the authoritative winner; a disagreeing weak vote is discarded
+        # rather than allowed to dilute or overturn it.
+        samples = count + sum(1 for v in weak if v == top)
+        if samples >= config.context_min_samples:
             consensus[sheet] = top
     return consensus
 

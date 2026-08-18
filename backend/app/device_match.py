@@ -69,6 +69,17 @@ SHEAR_WALL_ADAPTER = AdapterConfig(
     # Shear Wall investigation. Hold-down assemblies carry no level field in
     # the export (only a raw z), so HOLDOWN_ADAPTER leaves context_key unset.
     context_key="level",
+    # Two AUTHORITATIVE (gate-confident MATCH) votes, unanimous, is the
+    # floor here rather than the engine's conservative default of 3. The
+    # parameter's input changed meaning: it used to count any pairing,
+    # including LOCATION_MISMATCHes the engine explicitly does not trust;
+    # it now counts only gate-passing matches, whose corroborating weak
+    # votes must agree to be counted at all. Two independent confident
+    # matches agreeing on a storey is stronger evidence than three mixed
+    # ones were, so the floor is recalibrated to the new input rather than
+    # left at a number calibrated for noisier votes. A single confident
+    # match still cannot establish a sheet's level on its own.
+    context_min_samples=2,
     # The drawn wall's direction, extracted from the sheet's own vector
     # geometry (pdf_wall_geometry.py), validated against the real Madera
     # sheets at ~2 deg median error. Length is deliberately NOT used: one

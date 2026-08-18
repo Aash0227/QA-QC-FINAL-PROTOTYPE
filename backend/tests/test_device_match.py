@@ -497,3 +497,92 @@ def test_holdown_adapter_keeps_greedy_assignment():
     silently switch assignment strategy."""
     assert dm.HOLDOWN_ADAPTER.global_assignment is False
     assert dm.SHEAR_WALL_ADAPTER.global_assignment is True
+
+
+# ============ QA-critic findings: reproduced false-MATCH paths, now locked ===
+
+def test_global_assignment_never_trades_away_a_decisive_match():
+    """QA finding (CRITICAL, reproduced): minimising TOTAL distance is not
+    the same as maximising per-device correctness. A device with no genuine
+    correspondent could take a decisive device's element purely because the
+    swap lowered the global sum -- handing out a confident WRONG match while
+    demoting the rightful owner. Decisive pairings must be pinned."""
+    from app.matching_engine import AdapterConfig, assign
+
+    cost = {("A", "T1"): 0.1, ("A", "T2"): 5.0,
+            ("B", "T1"): 0.3, ("B", "T2"): 9.4}
+    # sum{A->T2,B->T1} = 5.3 < sum{A->T1,B->T2} = 9.5, so a pure min-sum
+    # optimiser prefers to strip A of its 0.1 ft match.
+    devices = [{"mark": "SW-1", "id": "A", "x": 0, "y": 0,
+                "appearances": ["a"], "sheets": ["S1"]},
+               {"mark": "SW-1", "id": "B", "x": 0, "y": 0,
+                "appearances": ["b"], "sheets": ["S1"]}]
+    targets = [{"id": "T1", "mark": "SW-1", "x": 0, "y": 0},
+               {"id": "T2", "mark": "SW-1", "x": 0, "y": 0}]
+    cfg = AdapterConfig(match_ft=4.0, mismatch_ft=12.0,
+                        distance=lambda d, t: cost[(d["id"], t["id"])],
+                        mark_blind=False, ambiguity_margin_ft=1.0,
+                        global_assignment=True)
+    assign(devices, targets, cfg)
+    a, b = devices
+    assert a["target_id"] == "T1" and a["status"] == "MATCH", a
+    assert b["target_id"] != "T1", b          # B must not steal A's element
+    assert b["status"] != "MATCH", b          # ...nor get a confident match
+
+
+def test_untrusted_pairings_cannot_outvote_a_confident_one_in_context():
+    """QA finding (CRITICAL, reproduced): LOCATION_MISMATCH is the engine's
+    own statement that it does NOT trust a pairing. Letting such votes
+    establish a sheet's context let a couple of stray same-mark pairings on
+    another storey flip the consensus and auto-resolve an ambiguous device
+    onto the WRONG level -- a silent false MATCH."""
+    from app.matching_engine import AdapterConfig, assign, point_distance
+
+    devices = [
+        {"mark": "SW-1", "x": 0.0, "y": 0.0, "id": "v1",
+         "appearances": ["v1"], "sheets": ["S1"]},          # confident, Level 2
+        {"mark": "SW-1", "x": 40.0, "y": 0.0, "id": "s1",
+         "appearances": ["s1"], "sheets": ["S1"]},          # stray, Level 1
+        {"mark": "SW-1", "x": 80.0, "y": 0.0, "id": "s2",
+         "appearances": ["s2"], "sheets": ["S1"]},          # stray, Level 1
+        {"mark": "SW-1", "x": 120.0, "y": 0.0, "id": "amb",
+         "appearances": ["amb"], "sheets": ["S1"]},         # genuinely ambiguous
+    ]
+    targets = [
+        {"id": "t_v1", "mark": "SW-1", "x": 0.1, "y": 0.0, "level": "Level 2"},
+        {"id": "t_s1", "mark": "SW-1", "x": 45.0, "y": 0.0, "level": "Level 1"},
+        {"id": "t_s2", "mark": "SW-1", "x": 85.0, "y": 0.0, "level": "Level 1"},
+        {"id": "t_a1", "mark": "SW-1", "x": 120.5, "y": 0.0, "level": "Level 1"},
+        {"id": "t_a2", "mark": "SW-1", "x": 119.5, "y": 0.0, "level": "Level 2"},
+    ]
+    cfg = AdapterConfig(match_ft=4.0, mismatch_ft=12.0, distance=point_distance,
+                        mark_blind=False, ambiguity_margin_ft=1.0,
+                        context_key="level", context_min_samples=2)
+    assign(devices, targets, cfg)
+    amb = devices[3]
+    # One authoritative vote (Level 2) cannot be overturned by two untrusted
+    # Level 1 votes, and cannot on its own establish the sheet either.
+    assert amb["status"] == "NEEDS_REVIEW", amb
+    assert amb.get("resolved_by") is None, amb
+
+
+def test_weak_votes_may_corroborate_but_never_contradict():
+    """Corroborating (LOCATION_MISMATCH) votes still count toward the sample
+    floor when they AGREE with the authoritative winner -- the channel must
+    not be so strict that it discards real evidence."""
+    from app.matching_engine import AdapterConfig, sheet_context_consensus
+
+    cfg = AdapterConfig(match_ft=4.0, mismatch_ft=12.0,
+                        distance=lambda d, t: 0.0, context_key="level",
+                        context_min_samples=3, context_min_consensus=0.6)
+    targets = {"t1": {"id": "t1", "level": "L2"}, "t2": {"id": "t2", "level": "L2"},
+               "t3": {"id": "t3", "level": "L1"}}
+    devices = [
+        {"status": "MATCH", "target_id": "t1", "sheets": ["S1"]},
+        {"status": "MATCH", "target_id": "t2", "sheets": ["S1"]},
+        {"status": "LOCATION_MISMATCH", "target_id": "t1", "sheets": ["S1"]},
+    ]
+    assert sheet_context_consensus(devices, targets, cfg) == {"S1": "L2"}
+    # A disagreeing weak vote must NOT count toward the floor.
+    devices[2] = {"status": "LOCATION_MISMATCH", "target_id": "t3", "sheets": ["S1"]}
+    assert sheet_context_consensus(devices, targets, cfg) == {}
