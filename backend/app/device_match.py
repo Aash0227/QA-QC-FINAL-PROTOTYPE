@@ -77,6 +77,11 @@ SHEAR_WALL_ADAPTER = AdapterConfig(
     # cardinality mismatch, not a discrepancy -- measured median error 2.4 ft
     # vs orientation's 1.9 deg.
     orientation_tolerance_deg=20.0,
+    # Shear-wall callouts contend for the same wall segments (one drawn run
+    # spans several model segments), so greedy nearest-first could hand a
+    # device's correct wall to a neighbouring callout. Hold Down keeps greedy
+    # -- its behavior is validated and regression-locked.
+    global_assignment=True,
 )
 
 

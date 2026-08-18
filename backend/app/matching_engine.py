@@ -63,6 +63,13 @@ class AdapterConfig:
     # this tolerance can be ruled out of a distance-tie. Unset (None)
     # disables the channel entirely.
     orientation_tolerance_deg: float | None = None
+    # Resolve the same-mark pass with a globally optimal one-to-one
+    # assignment instead of greedy nearest-first. Greedy lets whichever pair
+    # happens to be closest claim first, which can hand a device's correct
+    # element to a neighbour and leave the device with nothing (observed on
+    # real data as claim contention). OFF by default so categories validated
+    # under greedy -- Hold Down -- keep byte-identical behavior.
+    global_assignment: bool = False
 
 
 # ---------------------------------------------------------------- registration
@@ -231,6 +238,121 @@ def adaptive_match_ft(device: dict[str, Any],
     return min(base_ft + worst_ft, base_ft * ceiling_mult)
 
 
+def optimal_assignment(cost: list[list[float]]) -> list[int]:
+    """Minimum-total-cost one-to-one assignment (Jonker-Volgenant/Hungarian).
+
+    Returns row -> column, or -1 for an unassigned row. Rows must not exceed
+    columns; callers pad. Pure Python: the per-mark groups this runs on are
+    tens of elements, and the project has no scipy dependency.
+
+    Why optimal rather than greedy: greedy claims in distance order, so a
+    pair that is globally sub-optimal can consume an element a different
+    device needed, with no way to undo it. Minimising the TOTAL cost lets a
+    slightly worse individual pairing stand when it frees a much better one
+    elsewhere -- which is exactly the claim-contention failure."""
+    n, m = len(cost), len(cost[0]) if cost else 0
+    if n == 0 or m == 0:
+        return [-1] * n
+    INF = float("inf")
+    u = [0.0] * (n + 1)
+    v = [0.0] * (m + 1)
+    p = [0] * (m + 1)          # column -> row
+    way = [0] * (m + 1)
+    for i in range(1, n + 1):
+        p[0] = i
+        j0 = 0
+        minv = [INF] * (m + 1)
+        used = [False] * (m + 1)
+        while True:
+            used[j0] = True
+            i0 = p[j0]
+            delta = INF
+            j1 = -1
+            for j in range(1, m + 1):
+                if used[j]:
+                    continue
+                cur = cost[i0 - 1][j - 1] - u[i0] - v[j]
+                if cur < minv[j]:
+                    minv[j] = cur
+                    way[j] = j0
+                if minv[j] < delta:
+                    delta = minv[j]
+                    j1 = j
+            if j1 < 0:
+                break
+            for j in range(m + 1):
+                if used[j]:
+                    u[p[j]] += delta
+                    v[j] -= delta
+                else:
+                    minv[j] -= delta
+            j0 = j1
+            if p[j0] == 0:
+                break
+        while j0:
+            j1 = way[j0]
+            p[j0] = p[j1]
+            j0 = j1
+    out = [-1] * n
+    for j in range(1, m + 1):
+        if p[j] > 0:
+            out[p[j] - 1] = j - 1
+    return out
+
+
+def _globally_ordered_pairs(devices, targets, config):
+    """Same-mark (device, target) pairs ordered so that the globally optimal
+    one-to-one assignment is offered first.
+
+    The optimal assignment is computed per mark on feasible pairs only (those
+    within mismatch_ft); its chosen pairs are emitted first, in distance
+    order, and every remaining feasible pair follows in distance order so the
+    existing claim loop can still fall back. Every downstream guard --
+    ambiguity refusal, level compatibility, the adaptive match gate --
+    applies unchanged; this only changes WHICH pair is offered first."""
+    by_mark: dict[Any, tuple[list[int], list[int]]] = {}
+    for di, d in enumerate(devices):
+        if d.get("mark"):
+            by_mark.setdefault(d["mark"], ([], []))[0].append(di)
+    for ti, t in enumerate(targets):
+        if t.get("mark") in by_mark:
+            by_mark[t["mark"]][1].append(ti)
+
+    chosen: list[tuple[float, int, int]] = []
+    picked: set[tuple[int, int]] = set()
+    for _mark, (dis, tis) in by_mark.items():
+        if not dis or not tis:
+            continue
+        # Pad so rows <= cols; INFEASIBLE keeps out-of-gate pairs from being
+        # chosen while leaving the matrix square enough to solve.
+        big = config.mismatch_ft * 1000.0
+        rows = list(dis)
+        cols = list(tis)
+        while len(rows) > len(cols):
+            cols.append(-1)                      # dummy column
+        cost = [[(big if tj < 0 else
+                  (config.distance(devices[di], targets[tj])
+                   if config.distance(devices[di], targets[tj]) <= config.mismatch_ft
+                   else big))
+                 for tj in cols] for di in rows]
+        for r, c in enumerate(optimal_assignment(cost)):
+            if c < 0 or cols[c] < 0:
+                continue
+            di, ti = rows[r], cols[c]
+            dist = config.distance(devices[di], targets[ti])
+            if dist <= config.mismatch_ft:
+                chosen.append((dist, di, ti))
+                picked.add((di, ti))
+    chosen.sort()
+    rest = sorted(
+        (config.distance(d, t), di, ti)
+        for di, d in enumerate(devices)
+        for ti, t in enumerate(targets)
+        if d.get("mark") and d["mark"] == t.get("mark")
+        and (di, ti) not in picked)
+    return chosen + rest
+
+
 def _flag_ambiguous(devices: list[dict[str, Any]],
                     targets: list[dict[str, Any]],
                     distance: Callable[[dict[str, Any], dict[str, Any]], float],
@@ -267,11 +389,14 @@ def assign(devices: list[dict[str, Any]],
             d, registration_quality or {}, config.match_ft, config.match_gate_ceiling_mult)
     _flag_ambiguous(devices, targets, config.distance, config.mismatch_ft,
                     config.ambiguity_margin_ft)
-    pairs = sorted(
-        (config.distance(d, t), di, ti)
-        for di, d in enumerate(devices)
-        for ti, t in enumerate(targets)
-        if d["mark"] and d["mark"] == t.get("mark"))
+    if config.global_assignment:
+        pairs = _globally_ordered_pairs(devices, targets, config)
+    else:
+        pairs = sorted(
+            (config.distance(d, t), di, ti)
+            for di, d in enumerate(devices)
+            for ti, t in enumerate(targets)
+            if d["mark"] and d["mark"] == t.get("mark"))
     _claim(pairs, devices, targets, config.mismatch_ft, config.match_ft,
           config.level_delta_ft, config.ambiguity_margin_ft, same_mark=True)
     if config.mark_blind:

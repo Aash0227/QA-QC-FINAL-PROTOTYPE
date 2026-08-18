@@ -446,3 +446,54 @@ def test_evidence_conflict_annotation_never_changes_a_verdict():
     after = {tuple(d["appearances"]): d["status"]
              for d in dm.run(rows2, CALS, [], walls=walls)["categories"]["shear_wall"]["devices"]}
     assert before == after, (before, after)
+
+
+# --------------------- Shear Wall: globally optimal assignment
+
+def test_optimal_assignment_matches_brute_force():
+    """The Hungarian/JV solver must be exactly optimal -- a subtly wrong
+    implementation would silently mis-assign elements."""
+    import itertools, random
+    from app.matching_engine import optimal_assignment
+
+    random.seed(11)
+    for _ in range(60):
+        n = random.randint(1, 4)
+        m = random.randint(n, 5)
+        cost = [[round(random.uniform(0, 10), 3) for _ in range(m)]
+                for _ in range(n)]
+        got = optimal_assignment(cost)
+        mine = sum(cost[i][got[i]] for i in range(n) if got[i] >= 0)
+        best = min(sum(cost[i][perm[i]] for i in range(n))
+                   for perm in itertools.permutations(range(m), n))
+        assert abs(mine - best) < 1e-6, (cost, got)
+
+
+def test_global_assignment_beats_greedy_on_contention():
+    """Greedy claims in distance order, so the globally-best element can be
+    consumed by a device that had a good alternative, stranding one that did
+    not. Optimal assignment minimises TOTAL cost and keeps both paired."""
+    from app.matching_engine import AdapterConfig, assign, point_distance
+
+    # dev_a is near both walls; dev_b can only reach w_far.
+    devices = [
+        {"mark": "SW-1", "x": 10.0, "y": 10.0, "id": "d_a",
+         "appearances": ["a"], "sheets": ["S1"]},
+        {"mark": "SW-1", "x": 13.6, "y": 10.0, "id": "d_b",
+         "appearances": ["b"], "sheets": ["S1"]},
+    ]
+    targets = [{"id": "w_near", "mark": "SW-1", "x": 10.2, "y": 10.0},
+               {"id": "w_far", "mark": "SW-1", "x": 13.8, "y": 10.0}]
+    cfg = AdapterConfig(match_ft=4.0, mismatch_ft=12.0,
+                        distance=point_distance, mark_blind=False,
+                        ambiguity_margin_ft=0.0, global_assignment=True)
+    assign(devices, [dict(t) for t in targets], cfg)
+    assert devices[0]["target_id"] == "w_near", devices[0]
+    assert devices[1]["target_id"] == "w_far", devices[1]
+
+
+def test_holdown_adapter_keeps_greedy_assignment():
+    """Hold Down's behavior is validated and regression-locked; it must not
+    silently switch assignment strategy."""
+    assert dm.HOLDOWN_ADAPTER.global_assignment is False
+    assert dm.SHEAR_WALL_ADAPTER.global_assignment is True
