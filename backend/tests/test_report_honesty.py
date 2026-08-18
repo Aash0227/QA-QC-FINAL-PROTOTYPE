@@ -1,9 +1,11 @@
 """Report-honesty fixes: R-22 (CSV distance unit), R-21 (accuracy
-denominator), R-25 (reasons name the PDF callout), R-03 (cross-level pairing
-note) and R-10 (hold-down category sweep).
+denominator), R-25 (reasons name the PDF callout), R-03/Gate-2 (cross-level
+pairing gate) and R-10 (hold-down category sweep).
 
-R-03/R-10/R-25 are additive — the statuses they touch must come out the same,
-so each test that could move a verdict asserts the verdict too.
+R-10/R-25 are additive — the statuses they touch must come out the same, so
+each test that could move a verdict asserts the verdict too. R-03 was
+additive-only (note, status untouched); Gate 2 (Stage 9 accuracy program)
+promoted it to an actual gate — see test_cross_level_pairing_is_flagged.
 """
 
 from __future__ import annotations
@@ -64,13 +66,18 @@ def test_row_override_reason_carries_the_callout_tag() -> None:
 
 
 # ------------------------------------------------ R-03: cross-level pairing
-def test_cross_level_pairing_is_flagged_without_changing_the_status() -> None:
+def test_cross_level_pairing_is_flagged() -> None:
+    """Gate 2 (Stage 9): good XY, wrong floor is neither a confident MATCH
+    nor a confident MISMATCH -- the horizontal and vertical evidence
+    disagree, so it's NEEDS_REVIEW and nothing is claimed, not a MATCH with
+    a note attached (the pre-Gate-2 behavior)."""
     row = dict(ROW, elevation_ft=0.0)
     _, devices = _devices([row], [{"id": "rev_asm_011",
                                    "pdf_mark_candidate": "H1",
                                    "center_point": {"x": 10.2, "y": 10.1,
                                                     "z": 30.0}}])
-    assert devices[0]["status"] == "MATCH"                 # NOT gated
+    assert devices[0]["status"] == "NEEDS_REVIEW"
+    assert devices[0].get("target_id") is None              # nothing claimed
     assert "different level" in devices[0]["reason"]
     assert "Δz≈30 ft" in devices[0]["reason"]
 
