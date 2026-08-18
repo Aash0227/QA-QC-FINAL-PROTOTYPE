@@ -34,7 +34,7 @@ from __future__ import annotations
 import math
 from collections import Counter
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 
 @dataclass(frozen=True)
@@ -826,26 +826,95 @@ def segment_distance(d: dict[str, Any], t: dict[str, Any]) -> float:
 
 # ------------------------------------------------------------ product verdict
 
-MATCH_STATUSES = frozenset({"MATCH"})
-MISMATCH_STATUSES = frozenset({"LOCATION_MISMATCH", "MARK_MISMATCH"})
-# Everything else (NEEDS_REVIEW, PDF_ONLY, REVIT_ONLY, ...) is an internal
-# diagnostic state -- not confidently either verdict.
+# ---- Product verdict -------------------------------------------------------
+# The engine reasons in a rich internal vocabulary; the PRODUCT speaks two
+# location verdicts plus an honest "we could not tell". Internal states are
+# never destroyed -- product_result() carries the internal status and every
+# evidence field alongside the verdict, so the UI can show a clean answer and
+# still explain it.
+LOCATION_MATCH = "LOCATION_MATCH"
+LOCATION_MISMATCH = "LOCATION_MISMATCH"
+NEEDS_REVIEW = "NEEDS_REVIEW"
+NOT_APPLICABLE = "NOT_APPLICABLE"
+
+# A gate-passing pairing: same mark, inside the uncertainty-derived distance
+# gate, no unresolved ambiguity.
+_PRODUCT_MATCH = frozenset({"MATCH"})
+# A discrepancy the evidence DOES establish: the element is not where (or not
+# what) the drawing says. Each keeps its own internal status for the reason
+# text -- LOCATION_MISMATCH (too far), MARK_MISMATCH (right spot, wrong mark),
+# PDF_ONLY (drawn, nothing in the model), REVIT_ONLY (modelled, never drawn).
+_PRODUCT_MISMATCH = frozenset({
+    "LOCATION_MISMATCH", "MARK_MISMATCH", "PDF_ONLY", "REVIT_ONLY",
+})
+# Structurally OUT OF SCOPE for location matching -- the engine never had the
+# inputs to form an opinion. Kept apart from NEEDS_REVIEW deliberately: a
+# reviewer asked to "review" 153 posts whose category was never exported would
+# rightly ignore the queue. NO_REVIT_DATA (category absent from the export),
+# SPEC_ONLY (schedule row with no plan geometry), NOT_IN_SCHEDULE (plan mark
+# with no schedule row), NOT_EVALUATED (sheet never registered).
+_PRODUCT_NOT_APPLICABLE = frozenset({
+    "NO_REVIT_DATA", "SPEC_ONLY", "NOT_IN_SCHEDULE", "NOT_EVALUATED",
+})
+# Anything left is genuine uncertainty the engine TRIED to resolve and could
+# not -- NEEDS_REVIEW -- which is exactly the queue a human should work.
 
 
-def product_verdict(status: str) -> str | None:
-    """Collapse an internal engine status to the product-facing location
-    verdict (Gate 4 §3): LOCATION_MATCH / LOCATION_MISMATCH only, or None
-    when the evidence doesn't support a confident verdict either way.
+def product_verdict(status: str | None) -> str:
+    """Map one internal engine status to the product-facing verdict.
 
-    Not yet wired into any category's output -- compare.py, wall_match.py,
-    element_registry.py and the frontend all still read/emit the richer
-    internal vocabulary (PDF_ONLY, REVIT_ONLY, NEEDS_REVIEW, ...) across the
-    whole product surface. Collapsing that is a separate, cross-cutting
-    change spanning API contracts and the UI, deliberately out of scope for
-    the engine-extraction pass -- this function is the seam it will hang
-    off when that change is made."""
-    if status in MATCH_STATUSES:
-        return "LOCATION_MATCH"
-    if status in MISMATCH_STATUSES:
-        return "LOCATION_MISMATCH"
-    return None
+    Two verdicts the product asserts -- LOCATION_MATCH / LOCATION_MISMATCH --
+    plus NEEDS_REVIEW for evidence the engine tried and could not settle, and
+    NOT_APPLICABLE for rows it structurally could never evaluate. Separating
+    those last two matters: lumping "the exporter never shipped this category"
+    in with "two candidates were tied" produces a review queue nobody trusts. PDF_ONLY and
+    REVIT_ONLY collapse INTO mismatch rather than being product categories of
+    their own: to a QA reviewer "the drawing shows a hold-down the model does
+    not have" is a discrepancy, not a third kind of answer. Which kind it was
+    survives in the internal status and the reason text.
+
+    Uncertainty is never promoted: an ambiguous pairing the engine refused to
+    auto-pick stays NEEDS_REVIEW here too."""
+    if status in _PRODUCT_MATCH:
+        return LOCATION_MATCH
+    if status in _PRODUCT_MISMATCH:
+        return LOCATION_MISMATCH
+    if status in _PRODUCT_NOT_APPLICABLE:
+        return NOT_APPLICABLE
+    return NEEDS_REVIEW
+
+
+def product_result(row: dict[str, Any]) -> dict[str, Any]:
+    """The product-facing verdict for an element row, WITH its evidence.
+
+    Returns the block the UI/API should read. Nothing is discarded: the
+    internal status and every diagnostic the engine produced travel inside
+    ``evidence`` so a reviewer can always ask "why?" and get the real answer
+    rather than a simplified one.
+
+    Category-agnostic on purpose -- this is the single seam where internal
+    vocabulary becomes product vocabulary, so no category (and no frontend
+    file) re-implements the mapping."""
+    status = row.get("status")
+    verdict = product_verdict(status)
+    evidence: dict[str, Any] = {"internal_status": status}
+    for key in ("reason", "distance_ft", "distance_pdf_points", "confidence",
+                "device_id", "revit_ref", "sheet", "sheet_status", "mark",
+                "category", "resolved_by", "evidence_conflict", "spec",
+                "target_mark", "level"):
+        if row.get(key) is not None:
+            evidence[key] = row[key]
+    return {"verdict": verdict,
+            "is_certain": verdict in (LOCATION_MATCH, LOCATION_MISMATCH),
+            "in_scope": verdict != NOT_APPLICABLE,
+            "evidence": evidence}
+
+
+def summarize_product_verdicts(rows: Iterable[dict[str, Any]]) -> dict[str, int]:
+    """Product-level counts: how many elements the system can actually answer
+    for, and how many still need a human."""
+    counts = {LOCATION_MATCH: 0, LOCATION_MISMATCH: 0,
+              NEEDS_REVIEW: 0, NOT_APPLICABLE: 0}
+    for row in rows:
+        counts[product_verdict(row.get("status"))] += 1
+    return counts

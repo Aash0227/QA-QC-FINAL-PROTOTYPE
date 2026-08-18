@@ -19,6 +19,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+from . import matching_engine
+
 SCHEMA_VERSION = "element-list/1.0"
 
 NO_REVIT_CATEGORIES = ("post", "steel_column")
@@ -259,11 +261,18 @@ def build_element_list(
         )
 
     counts = _counts(elements)
+    # Product-facing verdict, derived at the single engine seam rather than
+    # re-implemented per category or per frontend file. Additive: every row
+    # keeps its internal status and all diagnostics; `product` just carries
+    # the clean answer plus the evidence needed to explain it.
+    for el in elements:
+        el["product"] = matching_engine.product_result(el)
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "sheets": [s["sheet_number"] for s in element_intelligence.get("sheets", []) if s.get("marks")],
         "counts": counts,
+        "product_counts": matching_engine.summarize_product_verdicts(elements),
         "count_consistency": {
             s["sheet_number"]: s.get("count_consistency", [])
             for s in element_intelligence.get("sheets", [])
