@@ -246,13 +246,10 @@ def test_registration_sheet_route_404s_honestly(project) -> None:
 
 
 # ------------------------ Doc-21 #4: which intelligence path actually ran
-def _run_page_intelligence(monkeypatch, s201_result, generic_result=None):
-    from app import generic_page_intelligence, pdf_intelligence
-    from app import profile as profile_mod
+def _run_page_intelligence(monkeypatch, generic_result=None):
+    from app import generic_page_intelligence
     from app.routers import pipeline as pipeline_router
 
-    monkeypatch.setattr(pdf_intelligence, "run_page_intelligence",
-                        lambda *_a, **_k: dict(s201_result))
     monkeypatch.setattr(generic_page_intelligence, "run_generic_page_intelligence",
                         lambda *_a, **_k: dict(generic_result or {}))
     monkeypatch.setattr(pipeline_router, "project_pdf_path", lambda: "unused.pdf")
@@ -260,33 +257,25 @@ def _run_page_intelligence(monkeypatch, s201_result, generic_result=None):
     return _json(pipeline_router.pdf_page_intelligence(use_saved=True))
 
 
-def test_intelligence_source_marks_the_s201_path_only_with_madera_profile(
-    project, monkeypatch,
-) -> None:
-    """Generic-first: the frozen S-201 detector runs ONLY when the project
-    manifest declares the madera profile."""
-    import app.profile as profile_mod
-    monkeypatch.setattr(profile_mod, "detection_profile", lambda: "madera")
-    out = _run_page_intelligence(monkeypatch, {"sheet_number": "S-201"})
-    assert out["intelligence_source"] == "s201_focused"
-    saved = json.loads(
-        (project / config.ARTIFACT_FILES["pdf_page_intelligence"]).read_text(encoding="utf-8"))
-    assert saved["intelligence_source"] == "s201_focused"
-
-
-def test_intelligence_source_marks_the_generic_path_as_default(project, monkeypatch) -> None:
+def test_intelligence_source_is_always_generic(project, monkeypatch) -> None:
+    """There is no project-specific detection path: every project, with no
+    exceptions or opt-ins, gets the generic detector."""
     (project / config.ARTIFACT_FILES["element_intelligence"]).write_text(
         json.dumps({"sheets": []}), encoding="utf-8")
-    out = _run_page_intelligence(monkeypatch, {"sheet_number": "S-201"},
-                                 {"sheet_number": "S7"})
+    out = _run_page_intelligence(monkeypatch, {"sheet_number": "S7"})
     assert out["intelligence_source"] == "generic"
     assert out["sheet_number"] == "S7"
+    saved = json.loads(
+        (project / config.ARTIFACT_FILES["pdf_page_intelligence"]).read_text(encoding="utf-8"))
+    assert saved["intelligence_source"] == "generic"
 
 
-def test_intelligence_source_marks_missing_element_intelligence_honestly(
-    project, monkeypatch,
-) -> None:
-    """Generic first but no element_intelligence — report the error instead of
-    pretending the frozen detector ran."""
-    out = _run_page_intelligence(monkeypatch, {"sheet_number": "S-201"})
-    assert out["intelligence_source"] == "generic" and out["error"]
+def test_missing_element_intelligence_reports_honestly(project, monkeypatch) -> None:
+    """Without element_intelligence.json (extract hasn't run), the endpoint
+    reports the gap honestly rather than falling back to any built-in
+    detector."""
+    out = _run_page_intelligence(monkeypatch)
+    assert out["intelligence_source"] == "generic"
+    assert out["error"]
+
+

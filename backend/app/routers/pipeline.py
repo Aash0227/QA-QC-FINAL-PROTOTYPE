@@ -22,9 +22,7 @@ from .. import (
     element_registry,
     leader_anchor,
     pdf_convert,
-    pdf_intelligence,
     phase_summary,
-    profile,
     progress,
     registration,
     revit_convert,
@@ -175,40 +173,26 @@ def pdf_page_intelligence(
     use_sample: bool = Query(default=False),
     use_saved: bool = Query(default=False),
 ) -> JSONResponse:
-    # GENERIC-FIRST: the generalized detector is the default for every project.
-    # The frozen S-201/Madera focused detector runs ONLY when the project
-    # manifest declares detection_profile == "madera" (explicit opt-in).
+    # Generic detection is the only path: sheet, mark family and schedule
+    # regions are all derived from this project's own extraction artifact
+    # (schedule_tables.discover_tables + element_detector), never assumed
+    # from a specific past project's sheet numbering or mark vocabulary.
     if use_saved:
-        if profile.detection_profile() == "madera":
-            result = pdf_intelligence.run_page_intelligence(project_pdf_path())
-            source = "s201_focused"
-            if result.get("error"):
-                # Focused detector declined (no S-201 page) — fall back to
-                # generic rather than reporting a hard failure.
-                ei_path = config.artifact_path("element_intelligence")
-                if ei_path.exists():
-                    from ..generic_page_intelligence import run_generic_page_intelligence
-                    ei = json.loads(ei_path.read_text(encoding="utf-8"))
-                    result = run_generic_page_intelligence(project_pdf_path(), ei)
-                    source = "generic"
+        ei_path = config.artifact_path("element_intelligence")
+        if not ei_path.exists():
+            result = {
+                "schema_version": "pdf-page-intelligence/1.0",
+                "source_file": str(project_pdf_path()),
+                "sheet_number": None, "page_index": None,
+                "error": "element_intelligence.json missing — run extraction first.",
+                "holdowns": [], "summary": {"total": 0, "by_type": {}},
+            }
         else:
-            ei_path = config.artifact_path("element_intelligence")
-            if not ei_path.exists():
-                result = {
-                    "schema_version": "pdf-page-intelligence/1.0",
-                    "source_file": str(project_pdf_path()),
-                    "sheet_number": None, "page_index": None,
-                    "error": "element_intelligence.json missing — run extraction first.",
-                    "holdowns": [], "summary": {"total": 0, "by_type": {}},
-                }
-                source = "generic"
-            else:
-                from ..generic_page_intelligence import run_generic_page_intelligence
-                ei = json.loads(ei_path.read_text(encoding="utf-8"))
-                result = run_generic_page_intelligence(project_pdf_path(), ei)
-                source = "generic"
+            from ..generic_page_intelligence import run_generic_page_intelligence
+            ei = json.loads(ei_path.read_text(encoding="utf-8"))
+            result = run_generic_page_intelligence(project_pdf_path(), ei)
         # Which detector actually produced this artifact (Doc-21 #4).
-        result["intelligence_source"] = source
+        result["intelligence_source"] = "generic"
         save_artifact("pdf_page_intelligence", result)
         return JSONResponse(result)
     if file is not None:
@@ -230,22 +214,17 @@ def pdf_page_intelligence(
             status_code=400, detail="Provide a PDF upload or set use_sample=true."
         )
 
-    # Direct-upload branch: the generalized detector needs element_intelligence
-    # (extract runs first in the orchestrated pipeline). Without it, only an
-    # explicit Madera profile may use the focused detector — otherwise report
-    # honestly instead of pretending the frozen detector can run on anything.
-    if profile.detection_profile() == "madera":
-        result = pdf_intelligence.run_page_intelligence(pdf_path)
-        result["intelligence_source"] = "s201_focused"
-    else:
-        result = {
-            "schema_version": "pdf-page-intelligence/1.0",
-            "source_file": str(pdf_path),
-            "sheet_number": None, "page_index": None,
-            "error": "Run extraction first (element_intelligence required for generic detection).",
-            "holdowns": [], "summary": {"total": 0, "by_type": {}},
-            "intelligence_source": "generic",
-        }
+    # Direct-upload branch: the generic detector needs element_intelligence
+    # (extract runs first in the orchestrated pipeline). Without it, report
+    # honestly instead of guessing a sheet/mark family.
+    result = {
+        "schema_version": "pdf-page-intelligence/1.0",
+        "source_file": str(pdf_path),
+        "sheet_number": None, "page_index": None,
+        "error": "Run extraction first (element_intelligence required for generic detection).",
+        "holdowns": [], "summary": {"total": 0, "by_type": {}},
+        "intelligence_source": "generic",
+    }
     save_artifact("pdf_page_intelligence", result)
     return JSONResponse(result)
 
@@ -771,30 +750,6 @@ PIPELINE_STAGES = stage_graph.STAGES
 
 def _artifact_present(keys: tuple[str, ...]) -> bool:
     return stage_graph.artifact_present(keys)
-
-
-def _run_stage(key: str) -> dict[str, Any]:
-    """Execute one pipeline stage by calling its existing handler (used by the
-    background run engine)."""
-    import asyncio
-    if key == "extract":
-        elements_extract()
-    elif key == "revit_convert":
-        asyncio.run(revit_ai_convert(use_saved=True))
-    elif key == "pdf_intelligence":
-        asyncio.run(pdf_page_intelligence(use_saved=True))
-    elif key == "pdf_convert":
-        pdf_ai_convert()
-    elif key == "ransac":
-        from .registration import registration_auto_holdown
-        registration_auto_holdown()
-    elif key == "compare":
-        compare_ai()
-    elif key == "match":
-        elements_match()
-    else:
-        raise ValueError(f"unknown stage {key}")
-    return {}
 
 
 @router.post("/api/pipeline/run")

@@ -18,15 +18,30 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import re
 from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
-CLUSTER_TOL_FT = 3.0        # same mark within this box = same physical device
-MATCH_FT = 2.0              # device-to-assembly gate for MATCH
-MISMATCH_FT = 6.0           # beyond MATCH up to this = LOCATION_MISMATCH
-LEVEL_DELTA_FT = 8.0        # |dz| above this = probably a different floor (R-03)
+# ponytail: tuned on Madera ground truth; knobs, not gospel -- all overridable
+# via env so a project with a different drafting convention or element
+# density isn't stuck with these exact numbers.
+CLUSTER_TOL_FT = float(os.environ.get("QAQC_DEVICE_CLUSTER_TOL_FT", "3.0"))
+    # same mark within this box, on DIFFERENT sheets, = same physical device
+    # re-drawn. This covers cross-sheet registration noise (each sheet solves
+    # its own transform), not element footprint -- see build_devices()
+    # same-sheet guard.
+MATCH_FT = float(os.environ.get("QAQC_DEVICE_MATCH_FT", "2.0"))
+    # device-to-assembly gate for MATCH
+MISMATCH_FT = float(os.environ.get("QAQC_DEVICE_MISMATCH_FT", "6.0"))
+    # beyond MATCH up to this = LOCATION_MISMATCH
+LEVEL_DELTA_FT = float(os.environ.get("QAQC_DEVICE_LEVEL_DELTA_FT", "8.0"))
+    # |dz| above this = probably a different floor (R-03)
+AMBIGUITY_MARGIN_FT = float(os.environ.get("QAQC_DEVICE_AMBIGUITY_MARGIN_FT", "1.0"))
+    # if the runner-up same-mark candidate is this close behind the best one,
+    # refuse to auto-pick -- a confident wrong MATCH is worse than a
+    # NEEDS_REVIEW (accuracy > match rate).
 SW_TOKEN_RE = re.compile(r"SW\s*-?\s*(\d+)", re.IGNORECASE)
 
 
@@ -123,7 +138,19 @@ def build_devices(rows: list[dict[str, Any]],
                   inverse_by_sheet: dict[str, Callable],
                   prefix: str) -> tuple[list[dict[str, Any]], int]:
     """Cluster sheet callout rows into physical devices (model feet).
-    Returns (devices, rows_without_usable_projection)."""
+    Returns (devices, rows_without_usable_projection).
+
+    Two rows only ever describe the SAME physical device when they're the same
+    mark, on DIFFERENT sheets (one sheet draws each physical element once --
+    two same-mark callouts on one sheet, e.g. paired hardware at a panel edge,
+    are always two distinct devices, however close together). A prior version
+    clustered by same-sheet-blind proximity with a running centroid, which
+    could (a) silently merge two real, closely-spaced same-mark hold-downs on
+    one sheet into a single device, and (b) chain-drift: the centroid moves as
+    members join, so a point just outside CLUSTER_TOL_FT of the true anchor
+    could still be absorbed via an intermediate member. Anchoring to the first
+    member's location (not a moving centroid) and forbidding same-sheet merges
+    closes both false-merge paths."""
     devices: list[dict[str, Any]] = []
     unprojected = 0
     for r in rows:
@@ -134,13 +161,15 @@ def build_devices(rows: list[dict[str, Any]],
             continue
         x, y = inv(p["x"], p["y"])
         mark = r.get("mark")
+        sheet = r.get("sheet")
         for d in devices:
             if (d["mark"] == mark
-                    and abs(d["x"] - x) <= CLUSTER_TOL_FT
-                    and abs(d["y"] - y) <= CLUSTER_TOL_FT):
+                    and sheet not in d["sheets"]
+                    and abs(d["_anchor_x"] - x) <= CLUSTER_TOL_FT
+                    and abs(d["_anchor_y"] - y) <= CLUSTER_TOL_FT):
                 d["appearances"].append(r["id"])
-                d["sheets"].append(r.get("sheet"))
-                # running centroid keeps clusters stable
+                d["sheets"].append(sheet)
+                # centroid for display/matching; anchor (fixed) gates membership
                 k = len(d["appearances"])
                 d["x"] += (x - d["x"]) / k
                 d["y"] += (y - d["y"]) / k
@@ -149,17 +178,42 @@ def build_devices(rows: list[dict[str, Any]],
                 break
         else:
             dev = {"mark": mark, "x": x, "y": y,
+                   "_anchor_x": x, "_anchor_y": y,
                    "appearances": [r["id"]],
-                   "sheets": [r.get("sheet")]}
+                   "sheets": [sheet]}
             if row_z_ft(r) is not None:
                 dev["z"] = row_z_ft(r)
             devices.append(dev)
     for i, d in enumerate(devices, start=1):
         d["id"] = f"{prefix}_dev_{i:03d}"
+        d.pop("_anchor_x", None)
+        d.pop("_anchor_y", None)
     return devices, unprojected
 
 
 # --------------------------------------------------------- P2: assignment
+
+def _flag_ambiguous(devices: list[dict[str, Any]],
+                    targets: list[dict[str, Any]],
+                    distance: Callable[[dict[str, Any], dict[str, Any]], float],
+                    mismatch_ft: float) -> None:
+    """Mark devices whose best same-mark candidate isn't decisively closer than
+    the runner-up. Greedy nearest-neighbor assignment picks A winner, but when
+    two candidates are nearly tied it's a coin flip dressed as a distance
+    comparison -- exactly the "confident wrong MATCH" this system must refuse
+    to produce. Only candidates within mismatch_ft are considered; a distant
+    runner-up would never be claimable anyway."""
+    for d in devices:
+        same_mark = [t for t in targets if t.get("mark") == d["mark"]]
+        if len(same_mark) < 2:
+            continue
+        dists = sorted((distance(d, t), t["id"]) for t in same_mark)
+        best_dist, best_id = dists[0]
+        second_dist, second_id = dists[1]
+        if best_dist <= mismatch_ft and (second_dist - best_dist) < AMBIGUITY_MARGIN_FT:
+            d["_ambiguous"] = True
+            d["_ambiguous_candidates"] = [best_id, second_id]
+
 
 def assign(devices: list[dict[str, Any]],
            targets: list[dict[str, Any]],
@@ -170,7 +224,9 @@ def assign(devices: list[dict[str, Any]],
     """Global one-to-one assignment. Mutates devices (status/target/dist)
     and targets (claimed flag). Same-mark pass first, then mark-blind
     (-> MARK_MISMATCH). Greedy on globally sorted distances = stable and
-    good enough at these densities."""
+    good enough at these densities -- except where two candidates are nearly
+    tied, which _flag_ambiguous() catches before any claiming happens."""
+    _flag_ambiguous(devices, targets, distance, mismatch_ft)
     pairs = sorted(
         (distance(d, t), di, ti)
         for di, d in enumerate(devices)
@@ -204,7 +260,21 @@ def assign(devices: list[dict[str, Any]],
 def _claim(pairs, devices, targets, gate_ft, match_ft, same_mark):
     for dist, di, ti in pairs:
         d, t = devices[di], targets[ti]
-        if "status" in d or t.get("_claimed") or dist > gate_ft:
+        if "status" in d or dist > gate_ft:
+            continue
+        if same_mark and d.get("_ambiguous"):
+            # Don't consume a target on an ambiguous pick -- leave both
+            # candidates free in case a *different* device unambiguously
+            # claims one of them, and surface this one for human review.
+            cands = ", ".join(d.get("_ambiguous_candidates", []))
+            d["status"] = "NEEDS_REVIEW"
+            d["reason"] = (
+                f"Ambiguous: two Revit {d['mark']} candidates ({cands}) are "
+                f"within {AMBIGUITY_MARGIN_FT:g} ft of each other near "
+                f"({d['x']:.1f}, {d['y']:.1f}) ft in model space -- refusing "
+                "to auto-pick. Resolve by comparing sheet context/leader lines.")
+            continue
+        if t.get("_claimed"):
             continue
         t["_claimed"] = True
         d["target_id"] = t["id"]
@@ -480,4 +550,47 @@ if __name__ == "__main__":
     seg = {"segment": ((0.0, 0.0), (10.0, 0.0))}
     assert abs(segment_distance({"x": 5, "y": 3}, seg) - 3) < 1e-9
     assert sw_token('N-INT-LB-54-SO-6" SW1') == "SW-1"
+
+    # Same-sheet same-mark rows are NEVER the same physical device, however
+    # close -- a sheet draws each element once. Two H1 callouts 1ft apart on
+    # S1 (e.g. paired hold-downs at a panel edge) must stay two devices.
+    paired_rows = [
+        {"id": "s1_h1_left", "sheet": "S1", "category": "holdown", "mark": "H1",
+         "status": "PDF_ONLY", "pdf_point": {"x": 140, "y": 860}},   # (10, 10)
+        {"id": "s1_h1_right", "sheet": "S1", "category": "holdown", "mark": "H1",
+         "status": "PDF_ONLY", "pdf_point": {"x": 144, "y": 860}},   # (11, 10)
+    ]
+    hd3 = run(paired_rows, cals, asm, walls=[])["categories"]["holdown"]
+    assert hd3["summary"]["physical_devices"] == 2, hd3["summary"]
+
+    # Ambiguous assignment: two same-mark Revit targets nearly equidistant
+    # from one device must NOT be force-matched to whichever is marginally
+    # closer -- that's a coin flip, not a match. NEEDS_REVIEW instead, and
+    # neither target is silently claimed (so a legitimate distinct device
+    # could still claim the correct one).
+    asm_ambiguous = [
+        {"id": "rev_asm_near_a", "pdf_mark_candidate": "H1",
+         "center_point": {"x": 10.4, "y": 10.0}},   # 0.40 ft away
+        {"id": "rev_asm_near_b", "pdf_mark_candidate": "H1",
+         "center_point": {"x": 9.7, "y": 10.0}},    # 0.30 ft away, nearly tied
+    ]
+    hd4 = run(rows, cals, asm_ambiguous, walls=[])["categories"]["holdown"]
+    dev4 = next(d for d in hd4["devices"] if d["mark"] == "H1")
+    assert dev4["status"] == "NEEDS_REVIEW", dev4
+    assert "Ambiguous" in dev4["reason"], dev4["reason"]
+    assert dev4.get("target_id") is None, dev4          # no target consumed
+    assert hd4["summary"]["revit_only"] == 2, hd4["summary"]  # both left free
+
+    # A decisive nearest candidate (well clear of the ambiguity margin) still
+    # matches normally -- the fix must not make every pairing NEEDS_REVIEW.
+    asm_decisive = [
+        {"id": "rev_asm_close", "pdf_mark_candidate": "H1",
+         "center_point": {"x": 10.1, "y": 10.0}},   # 0.10 ft away
+        {"id": "rev_asm_far", "pdf_mark_candidate": "H1",
+         "center_point": {"x": 15.0, "y": 10.0}},   # 5.0 ft away -- not close
+    ]
+    hd5 = run(rows, cals, asm_decisive, walls=[])["categories"]["holdown"]
+    dev5 = next(d for d in hd5["devices"] if d["mark"] == "H1")
+    assert dev5["status"] == "MATCH" and dev5["target_id"] == "rev_asm_close", dev5
+
     print("device_match self-check OK")

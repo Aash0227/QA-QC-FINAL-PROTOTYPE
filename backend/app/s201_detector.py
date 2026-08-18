@@ -1,19 +1,26 @@
 """
-S-201 Focused Hold-Down Detector — MADERA-SPECIFIC (FROZEN)
+Hold-down plan-mark detector: shared geometry engine + a legacy fixture.
 
-This module contains hardcoded Madera project data (bboxes, row bands, vocabulary,
-schedule tables). It is FROZEN and serves as the proven baseline for the Madera project.
+The REUSABLE part of this module — detect_holdowns_on_page() and everything
+it calls (leader-line following, filled-marker snapping, hardware-pair
+clustering) — is fully generic: every parameter (mark pattern, table regions,
+plan region) is supplied by the caller. generic_page_intelligence.py is the
+only production caller, and it always supplies these explicitly, so no
+project-specific constant below is ever reached from a live pipeline run.
 
-For NEW projects, use generic_page_intelligence.run_generic_page_intelligence() instead.
-The generic path derives all parameters dynamically from the PDF and learned vocabulary.
-
-Hardcoded Madera data in this file:
-- PLAN_BBOX: (40, 60, 2250, 1660) — Madera S-201 plan region
-- S201_TABLE_BBOXES: 4 exact table bounding boxes
-- HOLDOWN_ROW_BANDS: y-coordinate bands for H1-H4 rows
-- HOLDOWN_RE: only matches H[1-4] marks
-- MARK_TO_CORE_TOKEN: Madera-specific mark-to-product mapping
-- DEFAULT_HOLDOWN_SCHEDULE: complete Madera holdown schedule
+The MADERA-SPECIFIC constants below (PLAN_BBOX, S201_TABLE_BBOXES,
+HOLDOWN_ROW_BANDS, HOLDOWN_RE) are dead defaults that only apply when a
+caller omits its parameters entirely (mark_pattern is None) — no production
+code path does that. They exist solely so tests/test_pdf_detector.py can
+regression-test the shared geometry engine against a known-good real-world
+PDF and its known-good count (54 hold-downs, H1:10/H2:21/H3:6/H4:17). Schedule
+data and mark-to-core-token mapping are NEVER fabricated from a fixed table —
+a schedule that can't be parsed produces an honest "schedule_not_parsed"
+result, and core-token mapping comes from this project's own config (see
+app/normalization.py), never a built-in per-project table. Do not add a new
+production caller that relies on the dead geometry defaults; pass explicit
+parameters instead (see generic_page_intelligence.run_generic_page_intelligence
+for the pattern).
 """
 from __future__ import annotations
 
@@ -25,6 +32,8 @@ from pathlib import Path
 from typing import Any
 
 import fitz
+
+from . import normalization
 
 # NOTE: Copied verbatim from C:\qa-qc\backend\app\services\s201_holdown_detector.py
 # for the QA-QC-FINAL-PROTOTYPE. The only change from the production source is the
@@ -65,53 +74,6 @@ def _holdown_re_for(mark_pattern: str | None) -> re.Pattern[str]:
         rf"(?P<label>{mark_pattern})$",
         re.IGNORECASE,
     )
-
-MARK_TO_CORE_TOKEN = {
-    "H1": "HDU6",
-    "H2": "HDU11",
-    "H3": "HD10S",
-    "H4": "HD15B",
-}
-
-DEFAULT_HOLDOWN_SCHEDULE = {
-    "H1": {
-        "holdown_type": "S/HDU6",
-        "stud_fasteners": "(12) #14",
-        "anchor_bolt": '5/8" (SABR)',
-        "min_embedment_depth_in_concrete": '24"',
-    },
-    "H2": {
-        "holdown_type": "S/HDU11",
-        "stud_fasteners": "(27) #14",
-        "anchor_bolt": '7/8" (SABR)',
-        "min_embedment_depth_in_concrete": '28"',
-    },
-    "H3": {
-        "holdown_type": "S/HD10S",
-        "stud_fasteners": "(27) #14",
-        "anchor_bolt": '1" (SABR)',
-        "min_embedment_depth_in_concrete": '30"',
-    },
-    "H4": {
-        "holdown_type": "S/HD15B",
-        "stud_fasteners": '(4) 3/4" DIA',
-        "anchor_bolt": '1" (SABR)',
-        "min_embedment_depth_in_concrete": '30"',
-    },
-}
-
-
-def _madera_profile_active() -> bool:
-    """Opt-in gate (see app/profile.py): the frozen Madera defaults below may
-    only be used when the active project's manifest declares
-    detection_profile == 'madera'. Generic callers never see them."""
-    try:
-        from . import profile
-
-        return profile.detection_profile() == "madera"
-    except Exception:
-        return False
-
 
 @dataclass(frozen=True)
 class LineSegment:
@@ -164,30 +126,6 @@ def locate_s201_page(pdf_path: Path) -> int | None:
         doc.close()
 
 
-def build_focused_s201_holdown_entities(
-    *,
-    project_id: str,
-    pdf_path: Path,
-    evidence_dir: Path,
-) -> list[dict[str, Any]]:
-    """Return reviewer-facing PDF intelligence entities for S-201 hold-downs."""
-
-    page_index = locate_s201_page(pdf_path)
-    if page_index is None or not pdf_path.exists():
-        return []
-
-    detections = detect_s201_holdowns(
-        pdf_path=pdf_path,
-        page_index=page_index,
-        sheet_number="S-201",
-        evidence_dir=evidence_dir,
-    )
-    return [
-        _detection_to_entity(project_id=project_id, detection=detection)
-        for detection in detections
-    ]
-
-
 def detect_s201_holdowns(
     *,
     pdf_path: Path,
@@ -227,20 +165,14 @@ def detect_holdowns_on_page(
     table_bboxes: list[BBox] | None = None,
     plan_bbox: BBox | None = None,
 ) -> list[dict[str, Any]]:
-    # schedule=None means "no schedule could be parsed" (the legacy S-201 path);
-    # an explicitly-passed empty dict means "this project has no schedule data"
-    # (generic path). Neither may silently substitute Madera's defaults: the
-    # frozen DEFAULT_HOLDOWN_SCHEDULE stands in only behind the opt-in madera
-    # detection profile; everyone else gets honest empty schedule data flagged
-    # 'schedule_not_parsed' instead of manufactured rows.
-    schedule_is_default = schedule is None
-    schedule_not_parsed = False
-    if schedule_is_default:
-        if _madera_profile_active():
-            schedule = dict(DEFAULT_HOLDOWN_SCHEDULE)
-        else:
-            schedule = {}
-            schedule_not_parsed = True
+    # schedule=None means "no schedule could be parsed" (the legacy call
+    # signature); an explicitly-passed empty dict means "this project has no
+    # schedule data" (generic path). Neither ever manufactures rows — a
+    # schedule this system couldn't read produces an honest empty schedule
+    # flagged 'schedule_not_parsed', never a borrowed one from another project.
+    schedule_not_parsed = schedule is None
+    if schedule_not_parsed:
+        schedule = {}
     words = page.get_text("words")
     if table_bboxes is None:
         table_bboxes = _table_bboxes(page)
@@ -267,7 +199,7 @@ def detect_holdowns_on_page(
         else:
             sched = schedule.get(label, {})
             if sched:
-                sched_source = "default_madera" if schedule_is_default else "detected"
+                sched_source = "detected"
             else:
                 # mark absent from the read schedule — say so, never claim it
                 # was detected nor substitute defaults.
@@ -294,7 +226,7 @@ def detect_holdowns_on_page(
                     "normalized_mark": label,
                     "schedule_type_raw": sched.get("holdown_type", ""),
                     "schedule_source": sched_source,
-                    "normalized_core_token": MARK_TO_CORE_TOKEN.get(label, ""),
+                    "normalized_core_token": normalization.MARK_TO_CORE_TOKEN.get(label, ""),
                     "multiplicity_index": instance_index,
                     "total_multiplicity": total,
                     "bbox_pdf": tuple(round(float(v), 4) for v in source_bbox),
@@ -323,72 +255,10 @@ def summarize_focused_holdowns(detections: list[dict[str, Any]]) -> dict[str, An
     }
 
 
-def _detection_to_entity(*, project_id: str, detection: dict[str, Any]) -> dict[str, Any]:
-    crop_name = detection.get("evidence_crop_path") or ""
-    crop_path = f"/api/projects/{project_id}/evidence/{crop_name}" if crop_name else None
-    bbox = list(detection["bbox_pdf"])
-    center = list(detection["center_pdf"])
-    mark = detection["normalized_mark"]
-    return {
-        "id": detection["id"],
-        "entity_type": "focused_holdown",
-        "sheet_number": detection["sheet_number"],
-        "sheet_title": "",
-        "sheet_type": "FOUNDATION",
-        "page_num": detection["page_index"],
-        "bbox": bbox,
-        "raw_value": detection["raw_mark"],
-        "parsed_value": {
-            **detection,
-            "bbox_pdf": bbox,
-            "center_pdf": center,
-            "evidence_crop_path": crop_path,
-        },
-        "source_engine": "s201_focused_holdown_detector",
-        "confidence": detection["confidence"],
-        "evidence": {
-            "sheet_number": detection["sheet_number"],
-            "sheet_title": "",
-            "page_num": detection["page_index"],
-            "bbox": bbox,
-            "crop_path": crop_path,
-            "source_engine": "s201_focused_holdown_detector",
-            "confidence": detection["confidence"],
-        },
-        "normalized_value": mark,
-        "domain": "holdown",
-        "canonical_type": mark,
-        "classification_candidates": [
-            {
-                "domain": "holdown",
-                "canonical_type": mark,
-                "method": "s201_focused_holdown_detector",
-                "confidence": detection["confidence"],
-                "normalized_core_token": detection["normalized_core_token"],
-            }
-        ],
-        "coordinate_space": "pdf_points",
-        "center_point": center,
-        "evidence_crop": crop_path,
-        "source": "s201_focused_holdown_detector",
-        "schedule_type_raw": detection["schedule_type_raw"],
-        "normalized_core_token": detection["normalized_core_token"],
-        "anchor_bolt": detection["anchor_bolt"],
-        "fasteners": detection["fasteners"],
-        "embedment": detection["embedment"],
-        "multiplicity_index": detection["multiplicity_index"],
-        "total_multiplicity": detection["total_multiplicity"],
-    }
-
-
 def _extract_holdown_schedule(page: fitz.Page) -> dict[str, dict[str, str]] | None:
     """Parse the schedule table. None when it could not be parsed — callers
-    must not manufacture rows: the frozen DEFAULT_HOLDOWN_SCHEDULE stands in
-    only behind the opt-in madera detection profile."""
-    rows = _extract_holdown_schedule_from_words(page)
-    if rows:
-        return rows
-    return dict(DEFAULT_HOLDOWN_SCHEDULE) if _madera_profile_active() else None
+    must not manufacture rows to fill the gap."""
+    return _extract_holdown_schedule_from_words(page) or None
 
 
 def _extract_holdown_schedule_from_words(page: fitz.Page) -> dict[str, dict[str, str]]:

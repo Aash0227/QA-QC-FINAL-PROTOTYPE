@@ -19,40 +19,16 @@ def _load_project_config() -> dict:
     return {}
 
 
-# The Madera H1-H4<->HDU vocabulary. Served ONLY behind the opt-in madera
-# detection profile (project manifest declares detection_profile == "madera",
-# see app/profile.py); every other project gets generic behavior — an empty
-# map, learned from its own data.
-MADERA_VOCAB: dict[str, str] = {
-    "HDU6": "H1",
-    "HDU11": "H2",
-    "HD10S": "H3",
-    "HD15B": "H4",
-}
-
-
-def _madera_profile_active() -> bool:
-    """Opt-in gate: the Madera vocabulary is available only when the active
-    project's manifest declares detection_profile == 'madera'."""
-    try:
-        from . import profile
-
-        return profile.detection_profile() == "madera"
-    except Exception:
-        return False
-
-
 def _build_core_token_map() -> dict[str, str]:
-    """Build CORE_TOKEN_TO_MARK: project config wins; otherwise the Madera
-    H1-H4<->HDU vocabulary is served only behind the opt-in madera detection
-    profile. Every other project (including no project context at all) gets an
-    EMPTY map — generic behavior, no Madera vocabulary leakage."""
+    """Build CORE_TOKEN_TO_MARK from this project's own config
+    (``project_config.json``'s ``holdown_vocabulary``). No project ships a
+    built-in vocabulary: a project with no config, or no context at all, gets
+    an EMPTY map — the mark<->core-token mapping is learned per project, never
+    assumed from a prior project's naming convention."""
     cfg = _load_project_config()
     vocab = cfg.get("holdown_vocabulary")
     if isinstance(vocab, dict) and vocab:
         return {str(k).upper(): str(v).upper() for k, v in vocab.items()}
-    if _madera_profile_active():
-        return dict(MADERA_VOCAB)
     return {}
 
 
