@@ -126,8 +126,12 @@ def build_element_list(
                     # device_match's re-projection (Gate: Shear Wall) can use
                     # the same physically-corrected point wall_match already
                     # determined was more reliable, instead of silently
-                    # reverting to the raw bubble position.
-                    "match_anchor_pdf": row.get("anchor_point_pdf") or row.get("pdf_point"),
+                    # reverting to the raw bubble position. wall_match emits
+                    # anchor_point_pdf as [x, y] (a list) while pdf_point is
+                    # {"x":, "y":} (a dict) -- normalize to the dict shape
+                    # every downstream consumer (build_devices) expects.
+                    "match_anchor_pdf": _as_xy_dict(row.get("anchor_point_pdf"))
+                                       or row.get("pdf_point"),
                     "bbox_pdf": _mark_bbox(sheets_meta.get(sheet_number), row["pdf_mark_id"]),
                     "spec": vocab_specs.get(("shear_wall", row["mark"])),
                     "status": row["verdict"],
@@ -337,6 +341,16 @@ def _vocab_specs(element_intelligence: dict[str, Any]) -> dict[tuple[str, str], 
                 if mark:
                     specs.setdefault((category, mark), row.get("cells"))
     return specs
+
+
+def _as_xy_dict(point: Any) -> dict[str, float] | None:
+    """[x, y] (wall_match's anchor_point_pdf) -> {"x":, "y":} (pdf_point's
+    shape). None-safe -- callers fall back to pdf_point when this is None."""
+    if isinstance(point, dict):
+        return point
+    if isinstance(point, (list, tuple)) and len(point) == 2:
+        return {"x": point[0], "y": point[1]}
+    return None
 
 
 def _mark_bbox(sheet: dict[str, Any] | None, mark_id: str) -> list[float] | None:
