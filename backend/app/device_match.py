@@ -1,26 +1,44 @@
-"""Physical-device matching layer (docs/ACCURACY_100_PLAN.md P1-P3).
+"""Hold Down + Shear Wall adapters onto the generic matching engine
+(matching_engine.py) -- Stage 9 Gate 4 extracted this module's category-
+agnostic core (registration inverse, clustering, assignment, ambiguity,
+adaptive gate) into matching_engine.py. This module now owns only what's
+genuinely Hold-Down/Shear-Wall specific: which rows/targets to feed the
+engine, the two categories' numeric tolerances, and folding results back
+onto sheet rows (docs/ACCURACY_100_PLAN.md P1-P3):
 
-The frozen pipeline scores SHEET APPEARANCES: the same physical hold-down
-drawn on S-201, S-202 and S-205 becomes three independent rows, so one
-device can be MATCH on one sheet and PDF_ONLY on another. This module
-re-accounts everything at the physical-device level, in model FEET:
-
-P1  inverse-project every sheet callout to model space (chirality-aware —
-    PDF y is flipped vs model y) and cluster same-mark points across sheets
-    into physical devices;
-P2  global one-to-one assignment devices <-> Revit assemblies with explicit
-    gates in feet (no fake matches: model-space points come only from the
-    verified per-sheet calibrations that the frozen pipeline produced);
+P1  inverse-project every sheet callout to model space and cluster same-mark
+    points across sheets into physical devices (matching_engine.build_devices);
+P2  global one-to-one assignment devices <-> Revit assemblies via the generic
+    engine's evidence-gated assign() (mark, adaptive distance gate, ambiguity
+    margin, level compatibility);
 P3  honest device statuses folded back onto the sheet rows, original
     per-sheet verdicts retained as sheet_status for audit.
+
+This is a pure extraction: every constant, gate, and code path below behaves
+identically to the pre-Gate-4 device_match.py (regression-locked against
+real Madera data -- see docs/QBC_RND_MASTER_REPORT.md Gate 3 and the Gate 4
+migration notes). The wrapper functions (build_devices/assign/etc. with the
+old positional signatures) exist so existing callers and tests don't need to
+change; new adapters should call matching_engine directly with an
+AdapterConfig instead of adding more wrappers here.
 """
 from __future__ import annotations
 
 import logging
-import math
 import os
 import re
 from typing import Any, Callable
+
+from . import matching_engine as engine
+from .matching_engine import (  # re-exported for existing callers/tests
+    AdapterConfig,
+    build_devices,
+    fit_inverse,
+    inverse_from_calibration,
+    point_distance,
+    row_z_ft,
+    segment_distance,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -28,196 +46,40 @@ logger = logging.getLogger(__name__)
 # via env so a project with a different drafting convention or element
 # density isn't stuck with these exact numbers.
 CLUSTER_TOL_FT = float(os.environ.get("QAQC_DEVICE_CLUSTER_TOL_FT", "3.0"))
-    # same mark within this box, on DIFFERENT sheets, = same physical device
-    # re-drawn. This covers cross-sheet registration noise (each sheet solves
-    # its own transform), not element footprint -- see build_devices()
-    # same-sheet guard.
 MATCH_FT = float(os.environ.get("QAQC_DEVICE_MATCH_FT", "2.0"))
-    # device-to-assembly gate for MATCH
 MISMATCH_FT = float(os.environ.get("QAQC_DEVICE_MISMATCH_FT", "6.0"))
-    # beyond MATCH up to this = LOCATION_MISMATCH
 LEVEL_DELTA_FT = float(os.environ.get("QAQC_DEVICE_LEVEL_DELTA_FT", "8.0"))
-    # |dz| above this = probably a different floor (R-03)
 AMBIGUITY_MARGIN_FT = float(os.environ.get("QAQC_DEVICE_AMBIGUITY_MARGIN_FT", "1.0"))
-    # if the runner-up same-mark candidate is this close behind the best one,
-    # refuse to auto-pick -- a confident wrong MATCH is worse than a
-    # NEEDS_REVIEW (accuracy > match rate).
 MATCH_GATE_CEILING_MULT = float(os.environ.get("QAQC_DEVICE_MATCH_GATE_CEILING_MULT", "3.0"))
-    # the adaptive match gate (base + registration residual) never exceeds
-    # base_ft * this -- a bad calibration must surface as a registration
-    # blocker elsewhere, not silently widen the match gate until it swallows
-    # everything nearby (Stage 9 §D: "registration error eats the budget").
 SW_TOKEN_RE = re.compile(r"SW\s*-?\s*(\d+)", re.IGNORECASE)
 
-
-# ---------------------------------------------------------------- P1: fit
-
-def inverse_from_calibration(cal: dict[str, Any] | None) -> Callable | None:
-    """Exact pdf(pt)->model(ft) inverse from the calibration's stored
-    transform.inverse_matrix — the authoritative transform, chirality
-    already resolved by registration.py. Preferred over refitting."""
-    matrix = ((cal or {}).get("transform") or {}).get("inverse_matrix")
-    if not matrix or len(matrix) != 6:
-        return None
-    a, b, c, d, e, f = matrix
-
-    def inv(u, v, _a=a, _b=b, _c=c, _d=d, _e=e, _f=f):
-        return (_a * u + _b * v + _e, _c * u + _d * v + _f)
-
-    return inv
+HOLDOWN_ADAPTER = AdapterConfig(
+    match_ft=MATCH_FT, mismatch_ft=MISMATCH_FT, distance=point_distance,
+    mark_blind=True, cluster_tol_ft=CLUSTER_TOL_FT, level_delta_ft=LEVEL_DELTA_FT,
+    ambiguity_margin_ft=AMBIGUITY_MARGIN_FT, match_gate_ceiling_mult=MATCH_GATE_CEILING_MULT,
+)
+SHEAR_WALL_ADAPTER = AdapterConfig(
+    match_ft=4.0, mismatch_ft=12.0, distance=segment_distance,
+    mark_blind=False, cluster_tol_ft=CLUSTER_TOL_FT, level_delta_ft=LEVEL_DELTA_FT,
+    ambiguity_margin_ft=AMBIGUITY_MARGIN_FT, match_gate_ceiling_mult=MATCH_GATE_CEILING_MULT,
+)
 
 
-def fit_inverse(point_pairs: list[dict[str, Any]]) -> Callable | None:
-    """pdf(pt) -> model(ft) inverse of the sheet's similarity transform.
-    Tries both chiralities and keeps the lower-residual fit.
-
-    Needs >= 3 pairs: with only 2, BOTH chiralities fit exactly and the
-    winner is float noise — a mirrored transform scatters every device
-    20-60 ft off. Calibrations with 2 pairs (benchmark_2pt) carry
-    inverse_matrix, so run() never reaches this path for them."""
-    if not point_pairs or len(point_pairs) < 3:
-        return None
-    best = None
-    for flip in (1.0, -1.0):
-        fitted = _fit_one(point_pairs, flip)
-        if fitted and (best is None or fitted[1] < best[1]):
-            best = fitted
-    return best[0] if best else None
+def adaptive_match_ft(device: dict[str, Any],
+                      registration_quality: dict[str, dict[str, Any]],
+                      base_ft: float) -> float:
+    return engine.adaptive_match_ft(device, registration_quality, base_ft,
+                                    MATCH_GATE_CEILING_MULT)
 
 
-def _fit_one(pairs, flip):
-    src = [(p["revit_point"]["x"], flip * p["revit_point"]["y"]) for p in pairs]
-    dst = [(p["pdf_point"]["x"], p["pdf_point"]["y"]) for p in pairs]
-    n = len(src)
-    mx = sum(x for x, _ in src) / n
-    my = sum(y for _, y in src) / n
-    ux = sum(x for x, _ in dst) / n
-    uy = sum(y for _, y in dst) / n
-    sxx = sxy = ss = 0.0
-    for (x, y), (u, v) in zip(src, dst):
-        dx, dy, du, dv = x - mx, y - my, u - ux, v - uy
-        sxx += dx * du + dy * dv
-        sxy += dx * dv - dy * du
-        ss += dx * dx + dy * dy
-    if ss <= 0:
-        return None
-    a, b = sxx / ss, sxy / ss
-    det = a * a + b * b
-    if det <= 0:
-        return None
-    tx = ux - a * mx + b * my
-    ty = uy - b * mx - a * my
-
-    def inv(u, v, _a=a, _b=b, _tx=tx, _ty=ty, _det=det, _flip=flip):
-        u2, v2 = u - _tx, v - _ty
-        return ((_a * u2 + _b * v2) / _det,
-                _flip * (-_b * u2 + _a * v2) / _det)
-
-    rms = math.sqrt(sum(
-        (a * x - b * y + tx - u) ** 2 + (b * x + a * y + ty - v) ** 2
-        for (x, y), (u, v) in zip(src, dst)) / n)
-    return inv, rms
-
-
-# ------------------------------------------------------------ P1: devices
-
-def row_z_ft(row: dict[str, Any]) -> float | None:
-    """Model-space Z of a PDF callout row, when the row carries one (R-03).
-
-    The inverse transform is 2D, so a projected callout has no Z of its own —
-    only an explicit elevation/level height on the row can supply it. Today's
-    element rows carry none, so this returns None everywhere and the
-    different-level note below stays dormant; it lights up as soon as the
-    extractor starts stamping rows with an elevation."""
-    for key in ("elevation_ft", "level_elevation_ft"):
-        z = row.get(key)
-        if isinstance(z, (int, float)):
-            return float(z)
-    level = row.get("level")
-    if isinstance(level, dict) and isinstance(level.get("elevation_ft"), (int, float)):
-        return float(level["elevation_ft"])
-    return None
-
-
-def build_devices(rows: list[dict[str, Any]],
+def build_devices(rows: list[dict[str, Any]],  # noqa: F811 -- old positional signature
                   inverse_by_sheet: dict[str, Callable],
                   prefix: str) -> tuple[list[dict[str, Any]], int]:
-    """Cluster sheet callout rows into physical devices (model feet).
-    Returns (devices, rows_without_usable_projection).
-
-    Two rows only ever describe the SAME physical device when they're the same
-    mark, on DIFFERENT sheets (one sheet draws each physical element once --
-    two same-mark callouts on one sheet, e.g. paired hardware at a panel edge,
-    are always two distinct devices, however close together). A prior version
-    clustered by same-sheet-blind proximity with a running centroid, which
-    could (a) silently merge two real, closely-spaced same-mark hold-downs on
-    one sheet into a single device, and (b) chain-drift: the centroid moves as
-    members join, so a point just outside CLUSTER_TOL_FT of the true anchor
-    could still be absorbed via an intermediate member. Anchoring to the first
-    member's location (not a moving centroid) and forbidding same-sheet merges
-    closes both false-merge paths."""
-    devices: list[dict[str, Any]] = []
-    unprojected = 0
-    for r in rows:
-        inv = inverse_by_sheet.get(r.get("sheet"))
-        p = r.get("pdf_point")
-        if inv is None or not p:
-            unprojected += 1
-            continue
-        x, y = inv(p["x"], p["y"])
-        mark = r.get("mark")
-        sheet = r.get("sheet")
-        for d in devices:
-            if (d["mark"] == mark
-                    and sheet not in d["sheets"]
-                    and abs(d["_anchor_x"] - x) <= CLUSTER_TOL_FT
-                    and abs(d["_anchor_y"] - y) <= CLUSTER_TOL_FT):
-                d["appearances"].append(r["id"])
-                d["sheets"].append(sheet)
-                # centroid for display/matching; anchor (fixed) gates membership
-                k = len(d["appearances"])
-                d["x"] += (x - d["x"]) / k
-                d["y"] += (y - d["y"]) / k
-                if d.get("z") is None and row_z_ft(r) is not None:
-                    d["z"] = row_z_ft(r)
-                break
-        else:
-            dev = {"mark": mark, "x": x, "y": y,
-                   "_anchor_x": x, "_anchor_y": y,
-                   "appearances": [r["id"]],
-                   "sheets": [sheet]}
-            if row_z_ft(r) is not None:
-                dev["z"] = row_z_ft(r)
-            devices.append(dev)
-    for i, d in enumerate(devices, start=1):
-        d["id"] = f"{prefix}_dev_{i:03d}"
-        d.pop("_anchor_x", None)
-        d.pop("_anchor_y", None)
-    return devices, unprojected
+    return engine.build_devices(rows, inverse_by_sheet, prefix, CLUSTER_TOL_FT)
 
 
-# --------------------------------------------------------- P2: assignment
-
-def _flag_ambiguous(devices: list[dict[str, Any]],
-                    targets: list[dict[str, Any]],
-                    distance: Callable[[dict[str, Any], dict[str, Any]], float],
-                    mismatch_ft: float) -> None:
-    """Mark devices whose best same-mark candidate isn't decisively closer than
-    the runner-up. Greedy nearest-neighbor assignment picks A winner, but when
-    two candidates are nearly tied it's a coin flip dressed as a distance
-    comparison -- exactly the "confident wrong MATCH" this system must refuse
-    to produce. Only candidates within mismatch_ft are considered; a distant
-    runner-up would never be claimable anyway."""
-    for d in devices:
-        same_mark = [t for t in targets if t.get("mark") == d["mark"]]
-        if len(same_mark) < 2:
-            continue
-        dists = sorted((distance(d, t), t["id"]) for t in same_mark)
-        best_dist, best_id = dists[0]
-        second_dist, second_id = dists[1]
-        if best_dist <= mismatch_ft and (second_dist - best_dist) < AMBIGUITY_MARGIN_FT:
-            d["_ambiguous"] = True
-            d["_ambiguous_candidates"] = [best_id, second_id]
+def _flag_ambiguous(devices, targets, distance, mismatch_ft) -> None:
+    engine._flag_ambiguous(devices, targets, distance, mismatch_ft, AMBIGUITY_MARGIN_FT)
 
 
 def assign(devices: list[dict[str, Any]],
@@ -227,139 +89,13 @@ def assign(devices: list[dict[str, Any]],
            mismatch_ft: float = MISMATCH_FT,
            mark_blind: bool = True,
            registration_quality: dict[str, dict[str, Any]] | None = None) -> None:
-    """Global one-to-one assignment. Mutates devices (status/target/dist)
-    and targets (claimed flag). Same-mark pass first, then mark-blind
-    (-> MARK_MISMATCH). Greedy on globally sorted distances = stable and
-    good enough at these densities -- except where two candidates are nearly
-    tied, which _flag_ambiguous() catches before any claiming happens."""
-    for d in devices:
-        d["_match_gate_ft"] = adaptive_match_ft(d, registration_quality or {}, match_ft)
-    _flag_ambiguous(devices, targets, distance, mismatch_ft)
-    pairs = sorted(
-        (distance(d, t), di, ti)
-        for di, d in enumerate(devices)
-        for ti, t in enumerate(targets)
-        if d["mark"] and d["mark"] == t.get("mark"))
-    _claim(pairs, devices, targets, mismatch_ft, match_ft, same_mark=True)
-    if mark_blind:
-        # a device drawn with the wrong mark still occupies the spot —
-        # meaningful for sparse point devices; too noisy for dense walls.
-        pairs = sorted(
-            (distance(d, t), di, ti)
-            for di, d in enumerate(devices)
-            for ti, t in enumerate(targets))
-        _claim(pairs, devices, targets, match_ft, match_ft, same_mark=False)
-    known_marks = {t.get("mark") for t in targets}
-    for d in devices:
-        if "status" not in d:
-            d["status"] = "PDF_ONLY"
-            if d["mark"] not in known_marks:
-                d["reason"] = (
-                    f"Vocabulary gap: NO Revit element carries mark "
-                    f"{d['mark']} at all — the model expresses this type "
-                    "differently. Teach a type mapping to resolve every "
-                    f"{d['mark']} at once.")
-            else:
-                d["reason"] = (f"No {d['mark']} Revit device within "
-                               f"{mismatch_ft:g} ft of "
-                               f"({d['x']:.1f}, {d['y']:.1f}) ft.")
-
-
-def _claim(pairs, devices, targets, gate_ft, match_ft, same_mark):
-    for dist, di, ti in pairs:
-        d, t = devices[di], targets[ti]
-        if "status" in d or dist > gate_ft:
-            continue
-        if same_mark and d.get("_ambiguous"):
-            # Don't consume a target on an ambiguous pick -- leave both
-            # candidates free in case a *different* device unambiguously
-            # claims one of them, and surface this one for human review.
-            cands = ", ".join(d.get("_ambiguous_candidates", []))
-            d["status"] = "NEEDS_REVIEW"
-            d["reason"] = (
-                f"Ambiguous: two Revit {d['mark']} candidates ({cands}) are "
-                f"within {AMBIGUITY_MARGIN_FT:g} ft of each other near "
-                f"({d['x']:.1f}, {d['y']:.1f}) ft in model space -- refusing "
-                "to auto-pick. Resolve by comparing sheet context/leader lines.")
-            continue
-        if t.get("_claimed"):
-            continue
-        if same_mark:
-            gate = d.get("_match_gate_ft", match_ft)
-            dz, tz = d.get("z"), t.get("z")
-            off_level = (isinstance(dz, (int, float)) and isinstance(tz, (int, float))
-                        and abs(dz - tz) > LEVEL_DELTA_FT)
-            if dist <= gate and off_level:
-                # Good XY, wrong floor: not confidently either a MATCH or a
-                # LOCATION_MISMATCH (the horizontal evidence disagrees with
-                # the vertical evidence) -- surface for a human, claim
-                # nothing silently (same pattern as the ambiguous-pick
-                # branch above). Dormant until rows carry elevation_ft.
-                d["status"] = "NEEDS_REVIEW"
-                d["reason"] = (
-                    f"Physical device: mark {d['mark']} is {dist:.2f} ft from "
-                    f"{t['id']} in plan but Δz≈{abs(dz - tz):.0f} ft — "
-                    "different level; refusing to auto-pick.")
-                continue
-        t["_claimed"] = True
-        d["target_id"] = t["id"]
-        d["target_mark"] = t.get("mark")
-        if "x" in t:
-            d["target_point"] = [t["x"], t["y"]]
-        if isinstance(t.get("z"), (int, float)):
-            d["target_z"] = float(t["z"])   # R-03: carried for the level check
-        d["distance_ft"] = round(dist, 2)
-        if same_mark:
-            gate = d.get("_match_gate_ft", match_ft)
-            d["status"] = "MATCH" if dist <= gate else "LOCATION_MISMATCH"
-            gate_note = (f" ({'<=' if dist <= gate else '>'} {gate:g} ft MATCH gate"
-                        f", widened from {match_ft:g} ft for registration "
-                        "uncertainty)" if gate > match_ft else "")
-            d["reason"] = (
-                f"Physical device: mark {d['mark']} paired with {t['id']} at "
-                f"{dist:.2f} ft in model space{gate_note}.")
-        else:
-            d["status"] = "MARK_MISMATCH"
-            d["reason"] = (
-                f"Device at ({d['x']:.1f}, {d['y']:.1f}) ft: PDF says "
-                f"{d['mark']}, model has {t.get('mark')!r} ({t['id']}) "
-                f"{dist:.2f} ft away — check the callout or the family.")
-
-
-# ------------------------------------------------------------- distances
-
-def adaptive_match_ft(device: dict[str, Any],
-                      registration_quality: dict[str, dict[str, Any]],
-                      base_ft: float) -> float:
-    """Match gate widened by this device's own registration uncertainty
-    (Stage 9 §D: a fixed point gate ignores that the calibration's own solve
-    residual can eat the whole budget). residual_pt / scale (PDF-pt per
-    model-ft) converts the sheet's solve RMS into model feet; a multi-sheet
-    device uses its worst sheet (conservative). Missing/non-numeric quality
-    data (e.g. a device with no sheets, or a calibration that never recorded
-    scale) leaves the gate at base_ft -- this only ever widens the gate, never
-    narrows it below the original fixed tolerance."""
-    worst_ft = 0.0
-    for sheet in device.get("sheets", []):
-        q = registration_quality.get(sheet) or {}
-        rms_pt, scale = q.get("rms_residual_pt"), q.get("scale")
-        if not isinstance(rms_pt, (int, float)) or not isinstance(scale, (int, float)) or scale <= 0:
-            continue
-        worst_ft = max(worst_ft, rms_pt / scale)
-    return min(base_ft + worst_ft, base_ft * MATCH_GATE_CEILING_MULT)
-
-
-def point_distance(d: dict[str, Any], t: dict[str, Any]) -> float:
-    return math.hypot(d["x"] - t["x"], d["y"] - t["y"])
-
-
-def segment_distance(d: dict[str, Any], t: dict[str, Any]) -> float:
-    (x1, y1), (x2, y2) = t["segment"]
-    px, py = d["x"] - x1, d["y"] - y1
-    vx, vy = x2 - x1, y2 - y1
-    ll = vx * vx + vy * vy
-    s = 0.0 if ll == 0 else max(0.0, min(1.0, (px * vx + py * vy) / ll))
-    return math.hypot(d["x"] - (x1 + s * vx), d["y"] - (y1 + s * vy))
+    config = AdapterConfig(
+        match_ft=match_ft, mismatch_ft=mismatch_ft, distance=distance,
+        mark_blind=mark_blind, cluster_tol_ft=CLUSTER_TOL_FT,
+        level_delta_ft=LEVEL_DELTA_FT, ambiguity_margin_ft=AMBIGUITY_MARGIN_FT,
+        match_gate_ceiling_mult=MATCH_GATE_CEILING_MULT,
+    )
+    engine.assign(devices, targets, config, registration_quality)
 
 
 def sw_token(text: str) -> str | None:
@@ -394,7 +130,7 @@ def run(element_rows: list[dict[str, Any]],
                                         "confidence": ((cal or {}).get("quality") or {}).get("confidence"),
                                         "rms_residual_pt": ((cal or {}).get("quality") or {}).get("solve_rms_residual_pt"),
                                         # PDF-pt per model-ft; converts rms_residual_pt to
-                                        # model feet for the adaptive match gate (§Gate 2).
+                                        # model feet for the adaptive match gate (Gate 2).
                                         "scale": ((cal or {}).get("transform") or {}).get("scale"),
                                     } for sheet, cal in calibrations.items()},
                                 "categories": {}, "row_overrides": {}}
@@ -412,7 +148,7 @@ def run(element_rows: list[dict[str, Any]],
                         "x": a["center_point"]["x"], "y": a["center_point"]["y"],
                         "z": a["center_point"].get("z")})
     _run_category(registry, "holdown", hd_rows, inverse, targets,
-                  point_distance)
+                  HOLDOWN_ADAPTER)
 
     # --- shear walls (segment targets)
     sw_rows = [r for r in element_rows if r.get("category") == "shear_wall"
@@ -428,8 +164,7 @@ def run(element_rows: list[dict[str, Any]],
     # callout bubble sits off the run — wall-appropriate gates + absorb
     # unclaimed same-mark segments near a matched device.
     _run_category(registry, "shear_wall", sw_rows, inverse, wall_targets,
-                  segment_distance, mark_blind=False,
-                  match_ft=4.0, mismatch_ft=12.0, absorb_same_mark=True)
+                  SHEAR_WALL_ADAPTER, absorb_same_mark=True)
     return registry
 
 
@@ -459,13 +194,12 @@ def _annotate_reasons(devices: list[dict[str, Any]]) -> None:
             d["reason"] += tail
 
 
-def _run_category(registry, category, rows, inverse, targets, distance,
-                  mark_blind=True, match_ft=MATCH_FT,
-                  mismatch_ft=MISMATCH_FT, absorb_same_mark=False):
+def _run_category(registry, category, rows, inverse, targets,
+                  config: AdapterConfig, absorb_same_mark=False):
     devices, unprojected = build_devices(rows, inverse, category)
-    assign(devices, targets, distance, match_ft=match_ft,
-           mismatch_ft=mismatch_ft, mark_blind=mark_blind,
-           registration_quality=registry.get("registration_quality"))
+    assign(devices, targets, config.distance, match_ft=config.match_ft,
+          mismatch_ft=config.mismatch_ft, mark_blind=config.mark_blind,
+          registration_quality=registry.get("registration_quality"))
     _annotate_reasons(devices)
     claimed = {t["id"] for t in targets if t.pop("_claimed", False)}
     if absorb_same_mark:
@@ -475,9 +209,9 @@ def _run_category(registry, category, rows, inverse, targets, distance,
             if t["id"] in claimed:
                 continue
             near = [d for d in matched if d["mark"] == t.get("mark")
-                    and distance(d, t) <= mismatch_ft]
+                    and config.distance(d, t) <= config.mismatch_ft]
             if near:
-                d = min(near, key=lambda d: distance(d, t))
+                d = min(near, key=lambda d: config.distance(d, t))
                 d.setdefault("also_covers", []).append(t["id"])
                 claimed.add(t["id"])
     revit_only = [t["id"] for t in targets if t["id"] not in claimed]
@@ -649,12 +383,7 @@ if __name__ == "__main__":
     dev5 = next(d for d in hd5["devices"] if d["mark"] == "H1")
     assert dev5["status"] == "MATCH" and dev5["target_id"] == "rev_asm_close", dev5
 
-    # Gate 2: adaptive match gate widens with registration residual (Stage 9
-    # §D -- a fixed point gate ignores that the calibration's own solve
-    # residual can eat the whole budget). rms_residual_pt=8, scale=4 pt/ft ->
-    # +2.0 ft on top of the 2.0 ft base = 4.0 ft gate; a device 3.0 ft away
-    # (mismatch under the flat gate) now MATCHes because that 3.0 ft is
-    # explainable by the sheet's own registration noise.
+    # Gate 2: adaptive match gate widens with registration residual.
     cals_noisy = {
         "S1": {"point_pairs": pairs,
                "transform": {"scale": 4.0},
@@ -670,12 +399,7 @@ if __name__ == "__main__":
     assert dev_noisy["status"] == "MATCH", dev_noisy
     assert "widened from 2 ft" in dev_noisy["reason"], dev_noisy["reason"]
 
-    # Gate never widens past MATCH_GATE_CEILING_MULT * base_ft, however bad
-    # the residual -- a garbage calibration must surface as a registration
-    # blocker elsewhere, not silently swallow every nearby device. With
-    # defaults, ceiling (2.0*3=6.0 ft) == MISMATCH_FT (6.0 ft), so a device
-    # just beyond it is never even considered a candidate -> PDF_ONLY, not a
-    # gate-widened MATCH.
+    # Gate never widens past MATCH_GATE_CEILING_MULT * base_ft.
     cals_awful = {
         "S1": {"point_pairs": pairs,
                "transform": {"scale": 0.5},
@@ -687,8 +411,7 @@ if __name__ == "__main__":
                     walls=[])["categories"]["holdown"]["devices"][0]
     assert dev_awful["status"] == "PDF_ONLY", dev_awful
 
-    # Missing/incomplete registration_quality (no scale, or sheet absent) must
-    # never NARROW the gate below the flat base -- only ever widen it.
+    # Missing/incomplete registration_quality must never NARROW the gate.
     dev_plain = run(rows, cals, asm, walls=[])["categories"]["holdown"]["devices"][0]
     assert dev_plain["status"] == "MATCH", dev_plain
 
