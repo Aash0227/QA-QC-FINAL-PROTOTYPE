@@ -12,6 +12,7 @@ from fastapi import HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse
 
 from .. import config, element_registry, review, review_overlay, scene3d
+from .. import matching_engine
 from .common import load_artifact, make_router, project_pdf_path, save_artifact
 
 router = make_router()
@@ -48,7 +49,24 @@ def contained_project_pdf(source_file: str) -> Path:
 
 @router.get("/api/elements")
 def elements_get() -> JSONResponse:
-    return JSONResponse(load_artifact("element_list"))
+    """The element list, always carrying product verdicts.
+
+    build_element_list() stamps `product` / `product_counts` at write time,
+    but artifacts written before that existed have neither. Rather than make
+    every existing project re-run its pipeline to get a verdict on screen,
+    the collapse is applied here at read time when it is missing. It is a
+    pure function of `status`, so a backfilled response is identical to a
+    freshly-written one."""
+    payload = load_artifact("element_list")
+    if isinstance(payload, dict) and payload.get("elements") is not None:
+        elements = payload.get("elements") or []
+        if elements and not payload.get("product_counts"):
+            for el in elements:
+                if isinstance(el, dict) and not el.get("product"):
+                    el["product"] = matching_engine.product_result(el)
+            payload["product_counts"] = matching_engine.summarize_product_verdicts(
+                [e for e in elements if isinstance(e, dict)])
+    return JSONResponse(payload)
 
 
 @router.get("/api/devices")

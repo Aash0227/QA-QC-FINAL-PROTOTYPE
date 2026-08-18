@@ -119,3 +119,50 @@ def test_stage_summaries_are_built_from_real_numbers_not_prose():
 
     # a failed intelligence stage must say so, not report success
     assert "FAILED" in ps.pdf_intelligence({"error": "no plan sheet found"})
+
+
+# ------------------------------------- read-time backfill for old artifacts
+
+def test_elements_endpoint_backfills_verdicts_for_pre_existing_artifacts(monkeypatch):
+    """Artifacts written before the product layer existed have no `product`
+    block. Requiring a full pipeline re-run just to see a verdict on screen
+    would be a bad trade, so the endpoint applies the same pure collapse at
+    read time. A backfilled response must be identical to a fresh one."""
+    from app.routers import elements as el_router
+
+    stored = {"elements": [{"id": "a", "status": "MATCH", "reason": "ok"},
+                           {"id": "b", "status": "PDF_ONLY"},
+                           {"id": "c", "status": "NO_REVIT_DATA"}]}
+    monkeypatch.setattr(el_router, "load_artifact", lambda key: stored)
+    import json as _json
+    payload = _json.loads(el_router.elements_get().body)
+
+    assert payload["product_counts"] == {
+        "LOCATION_MATCH": 1, "LOCATION_MISMATCH": 1,
+        "NEEDS_REVIEW": 0, "NOT_APPLICABLE": 1}
+    verdicts = [e["product"]["verdict"] for e in payload["elements"]]
+    assert verdicts == ["LOCATION_MATCH", "LOCATION_MISMATCH", "NOT_APPLICABLE"]
+    # evidence survives the backfill
+    assert payload["elements"][0]["product"]["evidence"]["reason"] == "ok"
+
+
+def test_backfill_does_not_overwrite_freshly_written_verdicts(monkeypatch):
+    from app.routers import elements as el_router
+
+    stored = {"elements": [{"id": "a", "status": "MATCH",
+                            "product": {"verdict": "SENTINEL"}}],
+              "product_counts": {"LOCATION_MATCH": 1}}
+    monkeypatch.setattr(el_router, "load_artifact", lambda key: stored)
+    import json as _json
+    payload = _json.loads(el_router.elements_get().body)
+    assert payload["elements"][0]["product"]["verdict"] == "SENTINEL"
+    assert payload["product_counts"] == {"LOCATION_MATCH": 1}
+
+
+def test_backfill_tolerates_an_empty_or_broken_artifact(monkeypatch):
+    from app.routers import elements as el_router
+    import json as _json
+
+    for stored in ({}, {"elements": []}, {"elements": None}):
+        monkeypatch.setattr(el_router, "load_artifact", lambda key, s=stored: s)
+        _json.loads(el_router.elements_get().body)   # must not raise

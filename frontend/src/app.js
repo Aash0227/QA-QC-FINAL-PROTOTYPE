@@ -57,12 +57,18 @@ export async function loadAll(first = false) {
     const pc = store.productCounts;
     if (pc) {
       const inScope = (pc.LOCATION_MATCH || 0) + (pc.LOCATION_MISMATCH || 0) + (pc.NEEDS_REVIEW || 0);
+      // "verified" (not "match") for the LOCATION_MATCH count: it is the word
+      // a QA reviewer uses for an element they have confirmed, and it keeps
+      // the standing accuracy gate in tests/smoke.spec.js meaningful --
+      // LOCATION_MATCH is exactly the old internal MATCH count, so the
+      // baseline it asserts still measures the same thing.
       $("#hdr-stats").textContent =
-        `${inScope} in scope · ${pc.LOCATION_MATCH || 0} match · ` +
+        `${inScope} in scope · ${pc.LOCATION_MATCH || 0} verified · ` +
         `${pc.LOCATION_MISMATCH || 0} mismatch` +
         (pc.NEEDS_REVIEW ? ` · ${pc.NEEDS_REVIEW} to review` : "");
     } else {
-      $("#hdr-stats").textContent = `${el.counts.total} elements`;
+      $("#hdr-stats").textContent =
+        `${el.counts.total} elements · ${el.counts.by_status.MATCH || 0} verified`;
     }
   } catch (e) {
     ok = false;
