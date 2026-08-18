@@ -1,3 +1,4 @@
+import { tokenized } from "../../lib/api";
 import { useState } from "react";
 import { ChevronDown, ChevronRight, BrainCircuit, Loader2, Bug } from "lucide-react";
 
@@ -51,10 +52,19 @@ export default function PipelineIsland() {
             <Button size="sm" variant="secondary" onClick={() => startRun(true)}>
               Force
             </Button>
-            <Button size="sm" variant="outline" disabled title="not yet implemented">
-              Stop
-            </Button>
-            <Button size="sm" variant="outline" disabled title="not yet implemented">
+            {/* "Stop" was a disabled placeholder with no endpoint behind it.
+                A control that cannot do anything is worse than no control, so
+                it is removed rather than left to look broken. Re-add it when
+                a cancel endpoint exists.
+                "Report" now downloads the punch list that
+                GET /api/export/punch-list.csv has been serving all along. */}
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                window.location.href = tokenized("/api/export/punch-list.csv");
+              }}
+            >
               Report
             </Button>
           </div>

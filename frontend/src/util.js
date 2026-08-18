@@ -42,6 +42,55 @@ export const GLYPH = {
    to a human; the raw token stays the value we compare on. */
 export const statusLabel = s => String(s ?? "").replaceAll("_", " ").toLowerCase();
 
+/* ---------------------------------------------------------------------------
+   PRODUCT VERDICTS — what a QA engineer actually reads.
+
+   The engine reasons in ten internal statuses (COL above); the product speaks
+   four. matching_engine.product_verdict() does the collapse on the backend and
+   stamps `product` on every element row, so nothing here re-derives it — these
+   are only the labels and colours for rendering what the backend decided.
+
+   Colours are contrast-checked on the #0B0D10 ground (design direction §2) and
+   are deliberately NOT cyan: cyan means "you can click this", a verdict colour
+   means "the engine decided this". Every verdict also carries a glyph so a
+   result is never conveyed by colour alone.
+--------------------------------------------------------------------------- */
+export const VERDICTS = ["LOCATION_MATCH", "LOCATION_MISMATCH", "NEEDS_REVIEW", "NOT_APPLICABLE"];
+
+export const VERDICT_COL = {
+  LOCATION_MATCH: "#34D399",     // 10.4:1
+  LOCATION_MISMATCH: "#FF5A36",  //  6.3:1
+  NEEDS_REVIEW: "#FBBF24",       // 11.6:1
+  NOT_APPLICABLE: "#8A93A0",     //  6.3:1
+};
+
+export const VERDICT_GLYPH = {
+  LOCATION_MATCH: "✓", LOCATION_MISMATCH: "✕",
+  NEEDS_REVIEW: "?", NOT_APPLICABLE: "–",
+};
+
+export const VERDICT_LABEL = {
+  LOCATION_MATCH: "Match",
+  LOCATION_MISMATCH: "Mismatch",
+  NEEDS_REVIEW: "Needs review",
+  NOT_APPLICABLE: "Not applicable",
+};
+
+/* Longer-form copy for tooltips/empty states — says what the verdict MEANS to
+   a reviewer, not what the engine did internally. */
+export const VERDICT_HELP = {
+  LOCATION_MATCH: "The drawing and the model agree on where this element is.",
+  LOCATION_MISMATCH: "An established discrepancy — wrong place, wrong mark, drawn but not modelled, or modelled but not drawn.",
+  NEEDS_REVIEW: "The engine could not settle this one and refused to guess. A human decision is needed.",
+  NOT_APPLICABLE: "Out of scope — the model export never included this category, so no location verdict is possible.",
+};
+
+/* The verdict for a row, read from the backend's `product` block. Falls back to
+   the row's own product_verdict field, then to NEEDS_REVIEW — never guesses a
+   MATCH for a row whose verdict is missing. */
+export const rowVerdict = row =>
+  row?.product?.verdict || row?.product_verdict || "NEEDS_REVIEW";
+
 export const CATS = ["holdown", "shear_wall", "post", "steel_column", "wall_type"];
 export const CAT_LABEL = { holdown: "Hold-downs", shear_wall: "Shear walls", post: "Posts", steel_column: "Steel columns", wall_type: "Wall types" };
 export const DEFAULT_LAYERS = new Set(Object.keys(COL).filter(s => s !== "NOT_EVALUATED" && s !== "SPEC_ONLY"));

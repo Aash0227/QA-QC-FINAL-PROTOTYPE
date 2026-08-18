@@ -50,12 +50,20 @@ export async function loadAll(first = false) {
     const el = await api("/api/elements");
     store.elements = el.elements; store.sheets = el.sheets; store.cc = el.count_consistency || {};
     store.scopeWarnings = el.scope_warnings || [];   /* R-07 export-scope honesty */
-    $("#hdr-stats").textContent =
-      `${el.counts.total} elements · ${el.counts.by_status.MATCH || 0} verified · ` +
-      // "flagged", not "need review": this counts every discrepancy, while the
-      // header CTA counts the review QUEUE. Two different numbers under one
-      // label is exactly the kind of thing a reviewer stops trusting.
-      `${(el.counts.by_status.PDF_ONLY || 0) + (el.counts.by_status.REVIT_ONLY || 0) + (el.counts.by_status.LOCATION_MISMATCH || 0)} flagged`;
+    /* Product verdicts, collapsed by the backend at the matching-engine seam.
+       The header now speaks the same four words the results view does, instead
+       of summing internal statuses here and risking a different total. */
+    store.productCounts = el.product_counts || null;
+    const pc = store.productCounts;
+    if (pc) {
+      const inScope = (pc.LOCATION_MATCH || 0) + (pc.LOCATION_MISMATCH || 0) + (pc.NEEDS_REVIEW || 0);
+      $("#hdr-stats").textContent =
+        `${inScope} in scope · ${pc.LOCATION_MATCH || 0} match · ` +
+        `${pc.LOCATION_MISMATCH || 0} mismatch` +
+        (pc.NEEDS_REVIEW ? ` · ${pc.NEEDS_REVIEW} to review` : "");
+    } else {
+      $("#hdr-stats").textContent = `${el.counts.total} elements`;
+    }
   } catch (e) {
     ok = false;
     $("#hdr-stats").textContent = "no data yet — open ⚡ Pipeline";

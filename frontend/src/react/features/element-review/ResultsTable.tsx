@@ -1,4 +1,6 @@
 import { COL } from "../../../util";
+import { rowVerdict } from "../../../util.js";
+import { VerdictBadge } from "../verdict/VerdictBadge";
 import { store, select } from "../../../store";
 
 import { visibleElements } from "./elements";
@@ -34,7 +36,7 @@ export function ResultsTable() {
   if (!items.length) {
     return (
       <tr>
-        <td colSpan={7} className="empty-state">
+        <td colSpan={8} className="empty-state">
           No elements match.
         </td>
       </tr>
@@ -53,6 +55,12 @@ export function ResultsTable() {
           <td>{e.mark || "—"}</td>
           <td>{e.category || "—"}</td>
           <td>{e.sheet || "—"}</td>
+          <td>
+            {/* Product verdict first — that is the answer the reviewer needs.
+                The internal engine status stays beside it, dimmed, so the
+                detail behind the verdict is never hidden. */}
+            <VerdictBadge verdict={rowVerdict(e)} size="sm" />
+          </td>
           <td>
             <span
               className="status-pill"

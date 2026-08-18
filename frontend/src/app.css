@@ -469,3 +469,58 @@ header{background:rgba(22,24,29,.4) !important;border-bottom:1px solid rgba(255,
 .cat-hdr{background:rgba(30,41,59,.35)}
 .badge{background:rgba(20,23,28,.5)}
 @media(prefers-reduced-motion:reduce){.badge,.ai-card{backdrop-filter:none}}
+
+/* ===========================================================================
+   PRODUCT VERDICTS
+   The four verdicts a QA engineer reads, replacing engine-internal statuses
+   in the primary surfaces. Colours are contrast-checked on the dark ground
+   and deliberately avoid cyan: cyan means "clickable", a verdict colour means
+   "the engine decided". Every badge pairs colour with a glyph so the verdict
+   survives monochrome printing and colour-blind viewing.
+   =========================================================================== */
+.verdict-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 9px 3px 7px; border-radius: 999px;
+  font-size: 12px; font-weight: 600; line-height: 1.4;
+  letter-spacing: .01em; white-space: nowrap;
+  color: var(--vcol);
+  background: color-mix(in srgb, var(--vcol) 13%, transparent);
+  border: 1px solid color-mix(in srgb, var(--vcol) 36%, transparent);
+}
+.verdict-badge--sm { font-size: 11px; padding: 1px 7px 1px 6px; gap: 5px; }
+.verdict-badge__glyph { font-size: 11px; opacity: .95; }
+
+.verdict-bar { display: flex; flex-direction: column; gap: 10px; }
+.verdict-bar__track {
+  display: flex; height: 6px; border-radius: 999px; overflow: hidden;
+  background: rgba(255, 255, 255, .06);
+}
+.verdict-bar__seg { height: 100%; }
+.verdict-bar__seg + .verdict-bar__seg { box-shadow: -1px 0 0 rgba(0, 0, 0, .35); }
+
+.verdict-bar__legend {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px;
+}
+.verdict-bar__item {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 4px 10px; border-radius: 8px;
+  background: transparent; border: 1px solid transparent;
+  color: var(--muted); font-size: 12.5px; cursor: pointer;
+  transition: background .14s ease, border-color .14s ease, color .14s ease;
+}
+.verdict-bar__item:hover { background: rgba(255, 255, 255, .05); color: var(--fg); }
+.verdict-bar__item.is-selected {
+  background: color-mix(in srgb, var(--vcol) 12%, transparent);
+  border-color: color-mix(in srgb, var(--vcol) 40%, transparent);
+  color: var(--fg);
+}
+.verdict-bar__item strong { color: var(--fg); font-variant-numeric: tabular-nums; }
+.verdict-bar__dot {
+  width: 8px; height: 8px; border-radius: 50%; background: var(--vcol);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--vcol) 55%, transparent);
+}
+.verdict-bar__na { font-size: 12px; color: var(--muted); opacity: .75; }
+
+@media (prefers-reduced-motion: reduce) {
+  .verdict-bar__item { transition: none; }
+}

@@ -7,6 +7,11 @@ import { DEFAULT_LAYERS } from "./util.js";
 
 export const store = {
   elements: [], sheets: [], cc: {}, scene: null, scopeWarnings: [],
+  /* product_counts from GET /api/elements — the four product verdicts the
+     backend already collapsed to. Null until the first load. */
+  productCounts: null,
+  /* Verdict filter chosen from the verdict bar (null = show everything). */
+  verdictFilter: null,
   activeSheet: null, selected: null,
   filters: { search: "", status: "", sheet: "" },
   layers: new Set(DEFAULT_LAYERS),

@@ -14,4 +14,13 @@ export interface ElementRow {
   device_id?: string | null;
   reason?: string | null;
   taught_by?: string | null;
+  /** Product verdict block stamped by the backend
+   *  (matching_engine.product_result). The UI renders this rather than
+   *  re-deriving a verdict from `status`, so screen and API cannot diverge. */
+  product?: {
+    verdict: string;
+    is_certain?: boolean;
+    in_scope?: boolean;
+    evidence?: Record<string, unknown>;
+  } | null;
 }
