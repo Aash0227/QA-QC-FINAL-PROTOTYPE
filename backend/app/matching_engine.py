@@ -32,7 +32,8 @@ increment.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from collections import Counter
+from dataclasses import dataclass
 from typing import Any, Callable
 
 
@@ -48,6 +49,14 @@ class AdapterConfig:
     level_delta_ft: float = 8.0
     ambiguity_margin_ft: float = 1.0
     match_gate_ceiling_mult: float = 3.0
+    # Optional context evidence channel: the name of a target attribute
+    # (e.g. "level") whose value is expected to be consistent across all
+    # elements drawn on one sheet. When set, resolve_ambiguity_by_context()
+    # can break distance-ties between candidates that disagree on it. Leave
+    # None for categories whose targets carry no such attribute.
+    context_key: str | None = None
+    context_min_samples: int = 3
+    context_min_consensus: float = 0.6
 
 
 # ---------------------------------------------------------------- registration
@@ -263,6 +272,10 @@ def assign(devices: list[dict[str, Any]],
             for ti, t in enumerate(targets))
         _claim(pairs, devices, targets, config.match_ft, config.match_ft,
               config.level_delta_ft, config.ambiguity_margin_ft, same_mark=False)
+    # Evidence channel 5: break remaining distance-ties with sheet context
+    # (e.g. level) before falling through to PDF_ONLY. Runs after both claim
+    # passes so it only ever sees genuinely unresolved ambiguities.
+    resolve_ambiguity_by_context(devices, targets, config, registration_quality)
     known_marks = {t.get("mark") for t in targets}
     for d in devices:
         if "status" not in d:
@@ -337,6 +350,124 @@ def _claim(pairs, devices, targets, gate_ft, match_ft, level_delta_ft,
                 f"Device at ({d['x']:.1f}, {d['y']:.1f}) ft: PDF says "
                 f"{d['mark']}, model has {t.get('mark')!r} ({t['id']}) "
                 f"{dist:.2f} ft away — check the callout or the family.")
+
+
+# -------------------------------------------------- context evidence channel
+
+def sheet_context_consensus(devices: list[dict[str, Any]],
+                            targets_by_id: dict[str, dict[str, Any]],
+                            config: AdapterConfig) -> dict[str, str]:
+    """Per-sheet consensus value of config.context_key, derived ONLY from
+    devices the distance/mark evidence already resolved unambiguously.
+
+    Rationale (Stage 9, Shear Wall investigation): a single plan sheet draws
+    ONE story, so every element on it should share a level. That's real
+    evidence, but nothing in the pipeline states a sheet's level -- and
+    guessing it from sheet numbering would be exactly the "unreliable
+    assumption" this program forbids. Instead it's measured: the devices
+    that matched WITHOUT needing this channel vote, and their consensus
+    becomes the sheet's context. Non-circular (those pairings were decided
+    before any context logic ran) and project-agnostic (no sheet-naming or
+    level-naming convention is assumed anywhere).
+
+    Returns {sheet: consensus_value} only for sheets clearing BOTH
+    config.context_min_samples and config.context_min_consensus -- a sheet
+    with thin or split evidence yields nothing and its ambiguities stay
+    NEEDS_REVIEW, which is the correct outcome."""
+    if not config.context_key:
+        return {}
+    votes: dict[str, list[str]] = {}
+    for d in devices:
+        # Only confident, unambiguous pairings vote.
+        if d.get("_ambiguous") or not d.get("target_id"):
+            continue
+        if d.get("status") not in ("MATCH", "LOCATION_MISMATCH"):
+            continue
+        value = (targets_by_id.get(d["target_id"]) or {}).get(config.context_key)
+        if value is None:
+            continue
+        for sheet in d.get("sheets", []):
+            votes.setdefault(sheet, []).append(value)
+    consensus: dict[str, str] = {}
+    for sheet, values in votes.items():
+        if len(values) < config.context_min_samples:
+            continue
+        top, count = Counter(values).most_common(1)[0]
+        if count / len(values) >= config.context_min_consensus:
+            consensus[sheet] = top
+    return consensus
+
+
+def resolve_ambiguity_by_context(devices: list[dict[str, Any]],
+                                 targets: list[dict[str, Any]],
+                                 config: AdapterConfig,
+                                 registration_quality: dict[str, dict[str, Any]] | None = None) -> int:
+    """Second pass: break distance-ties using the sheet's context consensus.
+
+    Only fires when the tied candidates actually DISAGREE on the context
+    value and exactly one of them agrees with the sheet's consensus -- i.e.
+    when a genuinely distinguishing piece of evidence exists that the
+    distance-margin guard alone couldn't see. Deliberately conservative:
+
+      * never touches a device that isn't already NEEDS_REVIEW-by-ambiguity,
+        so it can't override or weaken any confident verdict;
+      * never claims an already-claimed target;
+      * still applies the normal adaptive distance gate to the winner, so a
+        context-resolved pairing that's too far away becomes an honest
+        LOCATION_MISMATCH rather than a MATCH;
+      * leaves the device NEEDS_REVIEW when both candidates agree on the
+        context value (no distinguishing evidence -> uncertainty is real).
+
+    Returns the number of devices resolved (for reporting/measurement)."""
+    if not config.context_key:
+        return 0
+    targets_by_id = {t["id"]: t for t in targets}
+    consensus = sheet_context_consensus(devices, targets_by_id, config)
+    if not consensus:
+        return 0
+    resolved = 0
+    for d in devices:
+        if not d.get("_ambiguous") or d.get("status") != "NEEDS_REVIEW":
+            continue
+        sheet_value = next((consensus[s] for s in d.get("sheets", [])
+                            if s in consensus), None)
+        if sheet_value is None:
+            continue
+        cands = [targets_by_id[c] for c in d.get("_ambiguous_candidates", [])
+                 if c in targets_by_id]
+        agreeing = [t for t in cands
+                    if t.get(config.context_key) == sheet_value
+                    and not t.get("_claimed")]
+        # Exactly one candidate on the sheet's own level = the tie was never
+        # a real tie; the other candidate is a different story's wall that
+        # happens to sit at the same plan coordinates.
+        if len(cands) < 2 or len(agreeing) != 1:
+            continue
+        if all(t.get(config.context_key) == sheet_value for t in cands):
+            continue  # no disagreement -> nothing distinguishing to use
+        winner = agreeing[0]
+        dist = config.distance(d, winner)
+        gate = d.get("_match_gate_ft", config.match_ft)
+        if dist > config.mismatch_ft:
+            continue
+        winner["_claimed"] = True
+        d["target_id"] = winner["id"]
+        d["target_mark"] = winner.get("mark")
+        if "x" in winner:
+            d["target_point"] = [winner["x"], winner["y"]]
+        d["distance_ft"] = round(dist, 2)
+        d["status"] = "MATCH" if dist <= gate else "LOCATION_MISMATCH"
+        d["resolved_by"] = config.context_key
+        rejected = [f"{t['id']} ({t.get(config.context_key)})"
+                    for t in cands if t["id"] != winner["id"]]
+        d["reason"] = (
+            f"Physical device: mark {d['mark']} paired with {winner['id']} at "
+            f"{dist:.2f} ft in model space. Distance alone was ambiguous, but "
+            f"this sheet's {config.context_key} is {sheet_value!r} (consensus "
+            f"of its unambiguous matches) and only this candidate is on it — "
+            f"ruled out: {', '.join(rejected)}.")
+        resolved += 1
+    return resolved
 
 
 # --------------------------------------------------------------- geometries

@@ -62,6 +62,12 @@ SHEAR_WALL_ADAPTER = AdapterConfig(
     match_ft=4.0, mismatch_ft=12.0, distance=segment_distance,
     mark_blind=False, cluster_tol_ft=CLUSTER_TOL_FT, level_delta_ft=LEVEL_DELTA_FT,
     ambiguity_margin_ft=AMBIGUITY_MARGIN_FT, match_gate_ceiling_mult=MATCH_GATE_CEILING_MULT,
+    # Revit walls carry a level name and one plan sheet draws one story, so
+    # two same-mark walls stacked at identical plan coordinates on different
+    # floors are distinguishable -- the dominant ambiguity cause found in the
+    # Shear Wall investigation. Hold-down assemblies carry no level field in
+    # the export (only a raw z), so HOLDOWN_ADAPTER leaves context_key unset.
+    context_key="level",
 )
 
 
@@ -167,7 +173,10 @@ def run(element_rows: list[dict[str, Any]],
         cl = w.get("centerline") or []
         if tok and len(cl) == 2:
             wall_targets.append({"id": w.get("id"), "mark": tok,
-                                 "segment": (tuple(cl[0]), tuple(cl[1]))})
+                                 "segment": (tuple(cl[0]), tuple(cl[1])),
+                                 # context evidence channel (see
+                                 # SHEAR_WALL_ADAPTER.context_key)
+                                 "level": w.get("level")})
     # Walls: a drawn SW run maps to SEVERAL Revit wall segments, and the
     # callout bubble sits off the run — wall-appropriate gates + absorb
     # unclaimed same-mark segments near a matched device.
@@ -205,9 +214,11 @@ def _annotate_reasons(devices: list[dict[str, Any]]) -> None:
 def _run_category(registry, category, rows, inverse, targets,
                   config: AdapterConfig, absorb_same_mark=False):
     devices, unprojected = build_devices(rows, inverse, category)
-    assign(devices, targets, config.distance, match_ft=config.match_ft,
-          mismatch_ft=config.mismatch_ft, mark_blind=config.mark_blind,
-          registration_quality=registry.get("registration_quality"))
+    # engine.assign directly, NOT the back-compat assign() wrapper above --
+    # that wrapper rebuilds an AdapterConfig from positional args and would
+    # silently drop this adapter's context_key / context thresholds.
+    engine.assign(devices, targets, config,
+                  registry.get("registration_quality"))
     _annotate_reasons(devices)
     claimed = {t["id"] for t in targets if t.pop("_claimed", False)}
     if absorb_same_mark:

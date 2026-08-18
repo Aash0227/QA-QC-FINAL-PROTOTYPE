@@ -229,3 +229,89 @@ def test_shear_wall_uses_leader_corrected_anchor_not_raw_bubble():
     reg2 = dm.run([row_no_anchor], CALS, [], walls=walls)
     dev2 = reg2["categories"]["shear_wall"]["devices"][0]
     assert dev2["status"] != "MATCH", dev2
+
+
+# ------------------------- Shear Wall: level context evidence channel
+
+def _sw_rows(n: int, sheet: str = "S1"):
+    """n SW-1 callouts spread far enough apart to stay distinct devices."""
+    return [
+        {"id": f"{sheet}_sw1_{i}", "sheet": sheet, "category": "shear_wall",
+         "mark": "SW-1", "status": "PDF_ONLY",
+         "pdf_point": _pdf_point_for(10 + i * 10, 10)}
+        for i in range(n)
+    ]
+
+
+def _stacked_walls(unstacked: tuple[int, ...] = ()):
+    """Pairs of identical SW-1 walls at the SAME plan coordinates on two
+    different levels -- the real Madera ambiguity pattern (a building's
+    shear walls stack floor to floor). Indices in `unstacked` get only their
+    Level 2 wall, so the matching callout pairs unambiguously and can act as
+    a consensus voter."""
+    walls = []
+    for i in range(4):
+        x = 10.0 + i * 10
+        levels = ("Level 2",) if i in unstacked else ("Level 1", "Level 2")
+        for lvl in levels:
+            walls.append({
+                "id": f"w_{i}_{lvl.replace(' ', '')}", "type_name": "X SW1",
+                "level": lvl, "centerline": [[x, 5.0], [x, 15.0]],
+            })
+    return walls
+
+
+def test_level_context_breaks_ambiguity_between_stacked_walls():
+    """Stage 9 Shear Wall investigation: the dominant NEEDS_REVIEW cause on
+    real Madera was two identical same-mark walls stacked on different
+    floors at identical plan coordinates -- distance and mark cannot tell
+    them apart, so the ambiguity guard (correctly) refused to pick. But a
+    plan sheet draws ONE story, so the sheet's level consensus -- measured
+    from the pairings that resolved WITHOUT this channel -- does
+    distinguish them."""
+    rows = _sw_rows(4)
+    # Callouts 0-2 have an unstacked (Level 2 only) wall -> they pair
+    # unambiguously and establish the sheet's level; callout 3 faces a real
+    # stacked Level 1 / Level 2 tie that only the context channel can break.
+    walls = _stacked_walls(unstacked=(0, 1, 2))
+    reg = dm.run(rows, CALS, [], walls=walls)
+    devices = reg["categories"]["shear_wall"]["devices"]
+    resolved = [d for d in devices if d.get("resolved_by") == "level"]
+    assert resolved, [(d["status"], d.get("reason")) for d in devices]
+    # Every context-resolved pairing must land on the consensus level.
+    by_id = {w["id"]: w for w in walls}
+    for d in resolved:
+        assert by_id[d["target_id"]]["level"] == "Level 2", d
+        assert "Level 2" in d["reason"] and "ambiguous" in d["reason"].lower()
+
+
+def test_level_context_never_fires_without_enough_consensus_evidence():
+    """Thin evidence must leave the uncertainty intact: with no unambiguous
+    pairing to establish the sheet's level, ambiguous devices stay
+    NEEDS_REVIEW rather than guessing a level."""
+    rows = _sw_rows(2)
+    walls = _stacked_walls()          # every candidate perfectly tied
+    reg = dm.run(rows, CALS, [], walls=walls)
+    devices = reg["categories"]["shear_wall"]["devices"]
+    assert not [d for d in devices if d.get("resolved_by")], devices
+    assert any(d["status"] == "NEEDS_REVIEW" for d in devices), devices
+
+
+def test_level_context_does_not_fire_when_candidates_share_a_level():
+    """When the tied candidates agree on the context value there is nothing
+    distinguishing about it -- the ambiguity is real and must be kept."""
+    rows = _sw_rows(4)
+    walls = _stacked_walls(unstacked=(0, 1, 2))
+    for w in walls:
+        w["level"] = "Level 1"        # all same level -> no discriminating power
+    reg = dm.run(rows, CALS, [], walls=walls)
+    devices = reg["categories"]["shear_wall"]["devices"]
+    assert not [d for d in devices if d.get("resolved_by")], devices
+
+
+def test_holdown_adapter_has_no_context_channel():
+    """Hold-down assemblies carry no level field in the export, so the
+    Hold Down adapter must leave the channel off -- guarding the validated
+    Gate 3 hold-down behavior against accidental change."""
+    assert dm.HOLDOWN_ADAPTER.context_key is None
+    assert dm.SHEAR_WALL_ADAPTER.context_key == "level"
