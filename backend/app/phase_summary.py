@@ -24,6 +24,14 @@ SCHEMA_VERSION = "phase-summaries/1.0"
 # wire on the frontend.
 PHASE_STEPS: dict[str, str] = {
     "upload": "upload",
+    # One entry per pipeline stage in stage_graph.STAGES, so every stage the
+    # user watches can narrate itself. Step keys match the progress-bus keys
+    # the pipeline modal already subscribes to.
+    "extract": "extract",
+    "revit_convert": "revit_convert",
+    "pdf_intelligence": "pdf_intelligence",
+    "pdf_convert": "pdf_convert",
+    "compare": "compare",
     "auto_benchmark": "benchmark",
     "revit_placement": "benchmark_workflow",
     "registration": "ransac",
@@ -166,6 +174,84 @@ def match(
         else:
             out += (f" None of {sampled} sampled mismatches share a direction — "
                     "these look like individual deviations, not a sheet-wide offset.")
+    return out
+
+
+def extract(element_intelligence: dict[str, Any] | None) -> str:
+    """What the drawings actually yielded: sheets, callouts, schedule marks."""
+    ei = element_intelligence or {}
+    sheets = ei.get("sheets") or []
+    marks = [m for s in sheets for m in (s.get("marks") or [])]
+    by_cat: dict[str, int] = {}
+    for m in marks:
+        by_cat[m.get("category") or "unclassified"] = by_cat.get(
+            m.get("category") or "unclassified", 0) + 1
+    breakdown = ", ".join(f"{v} {k.replace('_', ' ')}"
+                          for k, v in sorted(by_cat.items(), key=lambda kv: -kv[1]))
+    vocab = ei.get("vocabulary") or {}
+    known = sum(len(v) for v in vocab.values() if isinstance(v, list))
+    return (
+        f"Reading drawings: {len(marks)} callouts across {len(sheets)} sheet(s)"
+        + (f" — {breakdown}" if breakdown else "")
+        + f". Learned {known} mark(s) from the schedule tables."
+    )
+
+
+def revit_convert(ai_revit: dict[str, Any] | None) -> str:
+    """What came out of the model export, and whether marks could be resolved."""
+    ai = ai_revit or {}
+    assemblies = ai.get("canonical_holdown_assemblies") or []
+    resolved = sum(1 for a in assemblies if a.get("pdf_mark_candidate"))
+    unresolved = len(assemblies) - resolved
+    out = (f"Reading model: {len(assemblies)} hold-down assemblies, "
+           f"{resolved} resolved to a schedule mark")
+    if unresolved:
+        out += (f", {unresolved} unresolved — those cannot be matched until a "
+                "type mapping is taught")
+    return out + "."
+
+
+def pdf_intelligence(page_intelligence: dict[str, Any] | None) -> str:
+    """Which sheet became the plan, and how much was detected on it."""
+    pi = page_intelligence or {}
+    if pi.get("error"):
+        return (f"Locating the plan: FAILED — {pi['error']}. Downstream "
+                "comparison will have nothing to work from.")
+    detections = pi.get("detections") or pi.get("holdowns") or []
+    sheet = pi.get("sheet_number") or pi.get("source_sheet") or "the densest sheet"
+    return (f"Locating the plan: chose {sheet} and located "
+            f"{len(detections)} element(s) on it.")
+
+
+def pdf_convert(ai_pdf: dict[str, Any] | None) -> str:
+    """The normalized drawing-side rows the comparison will consume."""
+    ap = ai_pdf or {}
+    holdowns = ap.get("holdowns") or []
+    inferred = sum(1 for h in holdowns if h.get("z_is_inferred"))
+    marks = {h.get("normalized_mark") for h in holdowns if h.get("normalized_mark")}
+    out = (f"Preparing drawing data: {len(holdowns)} element(s) normalized "
+           f"across {len(marks)} mark(s)")
+    if inferred:
+        out += f", {inferred} with an inferred elevation"
+    return out + "."
+
+
+def compare(report: dict[str, Any] | None) -> str:
+    """The registration-gated comparison, in the terms that gate a MATCH."""
+    rep = report or {}
+    counts = (rep.get("summary") or {}).get("verdict_counts") or {}
+    reg = rep.get("registration") or {}
+    breakdown = ", ".join(f"{int(_n(v))} {k}" for k, v in
+                          sorted(counts.items(), key=lambda kv: -_n(kv[1])) if _n(v))
+    blockers = [b for b in (rep.get("blockers") or [])
+                if b.get("severity") == "blocking"]
+    out = f"Comparing: {breakdown or 'no pairings'}."
+    if not reg.get("match_allowed"):
+        out += (" MATCH was withheld — registration is not verified for this "
+                "sheet, so every pairing is reported as needing review.")
+    if blockers:
+        out += f" {len(blockers)} blocking issue(s): " + ", ".join(
+            b.get("code", "?") for b in blockers) + "."
     return out
 
 

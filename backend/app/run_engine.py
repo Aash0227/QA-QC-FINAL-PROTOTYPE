@@ -8,6 +8,8 @@ ponytail: in-memory lock + persisted in-flight flag, no DB, single user.
 """
 from __future__ import annotations
 
+import logging
+
 import json
 import threading
 import time
@@ -235,3 +237,43 @@ def _exec_stage(key: str) -> None:
         _r.elements_match()
     else:
         raise ValueError(f"unknown stage {key}")
+    _narrate_stage(key)
+
+
+# Stage -> (artifact key, phase_summary function). Only stages whose summary
+# is not already recorded by their own handler appear here: `ransac` and
+# `match` narrate themselves inside routers/registration.py and
+# routers/pipeline.py, where they hold richer in-memory state than the saved
+# artifact carries.
+_STAGE_NARRATION: dict[str, tuple[str, str]] = {
+    "extract": ("element_intelligence", "extract"),
+    "revit_convert": ("ai_revit", "revit_convert"),
+    "pdf_intelligence": ("pdf_page_intelligence", "pdf_intelligence"),
+    "pdf_convert": ("ai_pdf", "pdf_convert"),
+    "compare": ("compare", "compare"),
+}
+
+
+def _narrate_stage(key: str) -> None:
+    """Emit this stage's plain-English summary onto the progress bus.
+
+    Built from the artifact the stage just wrote, so the text can never
+    describe something that did not happen. Never raises: commentary must not
+    be able to fail a pipeline that otherwise succeeded."""
+    entry = _STAGE_NARRATION.get(key)
+    if not entry:
+        return
+    artifact_key, fn_name = entry
+    try:
+        import json
+
+        from . import config, phase_summary
+
+        path = config.artifact_path(artifact_key)
+        if not path.exists():
+            return
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        phase_summary.record(key, getattr(phase_summary, fn_name)(payload))
+    except Exception:  # noqa: BLE001 — commentary is best-effort by design
+        logging.getLogger(__name__).debug(
+            "stage narration failed for %s", key, exc_info=True)

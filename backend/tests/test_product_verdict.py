@@ -73,3 +73,49 @@ def test_summary_counts_every_row_exactly_once():
     assert counts == {me.LOCATION_MATCH: 2, me.LOCATION_MISMATCH: 1,
                       me.NEEDS_REVIEW: 1, me.NOT_APPLICABLE: 1}
     assert sum(counts.values()) == len(rows)
+
+
+# --------------------------------------------- per-stage pipeline narration
+
+def test_every_pipeline_stage_can_narrate_itself():
+    """Phase 3: the user watching the pipeline should be told what each stage
+    actually did. Every stage in stage_graph.STAGES must have either its own
+    narration hook or a handler that records one."""
+    from app import phase_summary, run_engine, stage_graph
+
+    for key, _title, _prereqs, _out in stage_graph.STAGES:
+        assert (key in run_engine._STAGE_NARRATION
+                or key in phase_summary.PHASE_STEPS
+                or key in ("ransac", "match")), key
+
+
+def test_stage_narration_never_raises():
+    """Commentary must not be able to fail a pipeline that otherwise
+    succeeded -- including when no project is bound or the stage is unknown."""
+    from app import run_engine
+
+    run_engine._narrate_stage("extract")
+    run_engine._narrate_stage("compare")
+    run_engine._narrate_stage("does_not_exist")
+
+
+def test_stage_summaries_are_built_from_real_numbers_not_prose():
+    """Each summary must reflect its input; a summary that ignores its input
+    would be fabrication."""
+    from app import phase_summary as ps
+
+    ei = {"sheets": [{"marks": [{"category": "holdown"}, {"category": "holdown"},
+                                {"category": "shear_wall"}]}],
+          "vocabulary": {"holdown": ["H1", "H2"]}}
+    text = ps.extract(ei)
+    assert "3 callouts" in text and "1 sheet" in text
+    assert "2 holdown" in text and "1 shear wall" in text
+
+    ai = {"canonical_holdown_assemblies": [{"pdf_mark_candidate": "H1"},
+                                           {"pdf_mark_candidate": None}]}
+    text = ps.revit_convert(ai)
+    assert "2 hold-down assemblies" in text and "1 resolved" in text
+    assert "1 unresolved" in text
+
+    # a failed intelligence stage must say so, not report success
+    assert "FAILED" in ps.pdf_intelligence({"error": "no plan sheet found"})
