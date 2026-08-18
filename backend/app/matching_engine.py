@@ -57,6 +57,12 @@ class AdapterConfig:
     context_key: str | None = None
     context_min_samples: int = 3
     context_min_consensus: float = 0.6
+    # Optional orientation evidence channel: when BOTH the device (from PDF
+    # geometry) and the target (from model geometry) carry an
+    # "orientation_deg", a candidate whose direction disagrees by more than
+    # this tolerance can be ruled out of a distance-tie. Unset (None)
+    # disables the channel entirely.
+    orientation_tolerance_deg: float | None = None
 
 
 # ---------------------------------------------------------------- registration
@@ -189,6 +195,11 @@ def build_devices(rows: list[dict[str, Any]],
                    "sheets": [sheet]}
             if row_z_ft(r) is not None:
                 dev["z"] = row_z_ft(r)
+            # PDF-side measured orientation, when the row carries one (see
+            # the orientation evidence channel). Model-space direction, so
+            # it is directly comparable to a target's orientation_deg.
+            if isinstance(r.get("orientation_deg"), (int, float)):
+                dev["orientation_deg"] = float(r["orientation_deg"])
             devices.append(dev)
     for i, d in enumerate(devices, start=1):
         d["id"] = f"{prefix}_dev_{i:03d}"
@@ -272,9 +283,13 @@ def assign(devices: list[dict[str, Any]],
             for ti, t in enumerate(targets))
         _claim(pairs, devices, targets, config.match_ft, config.match_ft,
               config.level_delta_ft, config.ambiguity_margin_ft, same_mark=False)
-    # Evidence channel 5: break remaining distance-ties with sheet context
-    # (e.g. level) before falling through to PDF_ONLY. Runs after both claim
-    # passes so it only ever sees genuinely unresolved ambiguities.
+    # Evidence channels 5 & 6: break remaining distance-ties, first with
+    # real PDF<->model orientation agreement (a direct measurement on both
+    # sides), then with sheet context consensus (an inference across
+    # devices). Both run after the claim passes so they only ever see
+    # genuinely unresolved ambiguities, and both refuse unless exactly one
+    # candidate agrees.
+    resolve_ambiguity_by_orientation(devices, targets, config)
     resolve_ambiguity_by_context(devices, targets, config, registration_quality)
     known_marks = {t.get("mark") for t in targets}
     for d in devices:
@@ -396,6 +411,78 @@ def sheet_context_consensus(devices: list[dict[str, Any]],
         if count / len(values) >= config.context_min_consensus:
             consensus[sheet] = top
     return consensus
+
+
+def _orientation_delta(p: float, q: float) -> float:
+    """Smallest undirected angular difference in degrees (a wall drawn
+    left-to-right and the same wall stored right-to-left are the same wall)."""
+    d = abs(p - q) % 180.0
+    return min(d, 180.0 - d)
+
+
+def resolve_ambiguity_by_orientation(devices: list[dict[str, Any]],
+                                     targets: list[dict[str, Any]],
+                                     config: AdapterConfig) -> int:
+    """Break a distance-tie when the DRAWN element's direction matches only
+    one candidate's direction.
+
+    Distinct from the context channel: this compares a real PDF-side
+    measurement (extracted from the sheet's own vector geometry -- see
+    pdf_wall_geometry.py) against a real model-side measurement, so it is
+    genuine PDF<->Revit evidence rather than a cross-device consensus. It
+    only runs for devices that actually carry an orientation, so a callout
+    whose drawn geometry could not be extracted is unaffected.
+
+    Same conservative contract as the context channel: only touches devices
+    already NEEDS_REVIEW-by-ambiguity, only fires when exactly one candidate
+    agrees, never claims a claimed target, and still applies the adaptive
+    distance gate to the winner."""
+    tol = config.orientation_tolerance_deg
+    if tol is None:
+        return 0
+    targets_by_id = {t["id"]: t for t in targets}
+    resolved = 0
+    for d in devices:
+        if not d.get("_ambiguous") or d.get("status") != "NEEDS_REVIEW":
+            continue
+        drawn = d.get("orientation_deg")
+        if not isinstance(drawn, (int, float)):
+            continue
+        cands = [targets_by_id[c] for c in d.get("_ambiguous_candidates", [])
+                 if c in targets_by_id]
+        if len(cands) < 2:
+            continue
+        if any(not isinstance(t.get("orientation_deg"), (int, float)) for t in cands):
+            continue
+        agreeing = [t for t in cands
+                    if _orientation_delta(drawn, t["orientation_deg"]) <= tol
+                    and not t.get("_claimed")]
+        if len(agreeing) != 1:
+            continue
+        winner = agreeing[0]
+        dist = config.distance(d, winner)
+        if dist > config.mismatch_ft:
+            continue
+        gate = d.get("_match_gate_ft", config.match_ft)
+        winner["_claimed"] = True
+        d["target_id"] = winner["id"]
+        d["target_mark"] = winner.get("mark")
+        if "x" in winner:
+            d["target_point"] = [winner["x"], winner["y"]]
+        d["distance_ft"] = round(dist, 2)
+        d["status"] = "MATCH" if dist <= gate else "LOCATION_MISMATCH"
+        d["resolved_by"] = "orientation"
+        rejected = [f"{t['id']} ({t['orientation_deg']:.0f}°)" for t in cands
+                    if t["id"] != winner["id"]]
+        d["reason"] = (
+            f"Physical device: mark {d['mark']} paired with {winner['id']} at "
+            f"{dist:.2f} ft in model space. Distance alone was ambiguous, but "
+            f"the wall drawn on the sheet runs at {drawn:.0f}° and only this "
+            f"candidate matches that direction "
+            f"({winner['orientation_deg']:.0f}°) — ruled out: "
+            f"{', '.join(rejected)}.")
+        resolved += 1
+    return resolved
 
 
 def resolve_ambiguity_by_context(devices: list[dict[str, Any]],

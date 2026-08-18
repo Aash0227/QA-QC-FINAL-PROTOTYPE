@@ -112,11 +112,41 @@ def _wall_records(revit_walls: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
+def drawn_wall_orientation_deg(
+    anchor: tuple[float, float],
+    wall_runs: list[dict[str, Any]] | None,
+    inverse_matrix: list[float] | None,
+    max_distance_pt: float = 45.0,
+) -> float | None:
+    """Direction of the wall actually DRAWN at this callout's anchor, in
+    MODEL space degrees, or None when no drawn run is near enough.
+
+    wall_runs come from pdf_wall_geometry.extract_wall_runs(page). Both ends
+    of the run are inverse-projected through the sheet's OWN registration
+    before the angle is measured, so the result is directly comparable to a
+    Revit wall's direction and any rotation the sheet carries is handled by
+    the same transform that handles every other PDF<->model conversion --
+    no assumption that plan north matches model north."""
+    if not wall_runs or not inverse_matrix or len(inverse_matrix) != 6:
+        return None
+    from . import pdf_wall_geometry
+
+    run = pdf_wall_geometry.nearest_run(wall_runs, anchor, max_distance_pt)
+    if run is None:
+        return None
+    a, b, c, d, e, f = inverse_matrix
+    (ax, ay), (bx, by) = run["segment"]
+    p = (a * ax + b * ay + e, c * ax + d * ay + f)
+    q = (a * bx + b * by + e, c * bx + d * by + f)
+    return math.degrees(math.atan2(q[1] - p[1], q[0] - p[0])) % 180.0
+
+
 def match_shear_walls(
     sheet_marks: list[dict[str, Any]],
     revit_walls: list[dict[str, Any]],
     calibration: dict[str, Any] | None,
     leader_segments: list[tuple[tuple[float, float], tuple[float, float]]] | None = None,
+    wall_runs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Greedy one-to-one SW matching for one sheet.
 
@@ -201,6 +231,14 @@ def match_shear_walls(
         row = _row(c, w, d, verdict, reason)
         row["anchor_method"] = anchor_method
         row["anchor_point_pdf"] = [round(anchor_pt[0], 2), round(anchor_pt[1], 2)]
+        # PDF-side measured evidence: the direction of the wall actually
+        # drawn at this anchor. Consumed downstream as a tie-breaker between
+        # otherwise-equidistant same-mark candidates.
+        drawn_deg = drawn_wall_orientation_deg(
+            anchor_pt, wall_runs,
+            ((calibration or {}).get("transform") or {}).get("inverse_matrix"))
+        if drawn_deg is not None:
+            row["orientation_deg"] = round(drawn_deg, 1)
         rows.append(row)
 
     for ci, c in enumerate(callouts):

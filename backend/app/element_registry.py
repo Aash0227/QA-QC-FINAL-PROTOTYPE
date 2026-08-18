@@ -132,6 +132,9 @@ def build_element_list(
                     # every downstream consumer (build_devices) expects.
                     "match_anchor_pdf": _as_xy_dict(row.get("anchor_point_pdf"))
                                        or row.get("pdf_point"),
+                    # PDF-side measured direction of the drawn wall (model
+                    # space degrees); orientation evidence channel.
+                    "orientation_deg": row.get("orientation_deg"),
                     "bbox_pdf": _mark_bbox(sheets_meta.get(sheet_number), row["pdf_mark_id"]),
                     "spec": vocab_specs.get(("shear_wall", row["mark"])),
                     "status": row["verdict"],

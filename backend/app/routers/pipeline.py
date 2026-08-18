@@ -22,6 +22,7 @@ from .. import (
     element_registry,
     leader_anchor,
     pdf_convert,
+    pdf_wall_geometry,
     phase_summary,
     progress,
     registration,
@@ -518,9 +519,20 @@ def elements_match() -> JSONResponse:
                 )
             except Exception:
                 segments = None  # anchors stay bubbles — never blocks matching
+            # Drawn wall runs from the same page: supplies the PDF-side
+            # orientation evidence the matcher uses to break same-mark ties
+            # (pdf_wall_geometry). Best-effort — extraction failure just
+            # means that channel stays dormant for this sheet.
+            wall_runs = None
+            try:
+                wall_runs = pdf_wall_geometry.extract_wall_runs(
+                    _pdf_doc[sheet["page_index"]]
+                )
+            except Exception:
+                wall_runs = None
             wall_reports[sheet_number] = wall_match.match_shear_walls(
                 sw_marks, raw_revit.get("walls", []), cal,
-                leader_segments=segments,
+                leader_segments=segments, wall_runs=wall_runs,
             )
         if hd_marks and sheet_number != compare_sheet and cal is not None:
             # Same frozen compare(), this sheet's marks + calibration.

@@ -25,6 +25,7 @@ AdapterConfig instead of adding more wrappers here.
 from __future__ import annotations
 
 import logging
+import math
 import os
 import re
 from typing import Any, Callable
@@ -68,6 +69,14 @@ SHEAR_WALL_ADAPTER = AdapterConfig(
     # Shear Wall investigation. Hold-down assemblies carry no level field in
     # the export (only a raw z), so HOLDOWN_ADAPTER leaves context_key unset.
     context_key="level",
+    # The drawn wall's direction, extracted from the sheet's own vector
+    # geometry (pdf_wall_geometry.py), validated against the real Madera
+    # sheets at ~2 deg median error. Length is deliberately NOT used: one
+    # drawn hatch run legitimately spans SEVERAL Revit wall segments (the
+    # same reason absorb_same_mark exists), so drawn-vs-segment length is a
+    # cardinality mismatch, not a discrepancy -- measured median error 2.4 ft
+    # vs orientation's 1.9 deg.
+    orientation_tolerance_deg=20.0,
 )
 
 
@@ -172,11 +181,17 @@ def run(element_rows: list[dict[str, Any]],
         tok = sw_token(w.get("type_name") or "")
         cl = w.get("centerline") or []
         if tok and len(cl) == 2:
+            (wx1, wy1), (wx2, wy2) = tuple(cl[0]), tuple(cl[1])
             wall_targets.append({"id": w.get("id"), "mark": tok,
-                                 "segment": (tuple(cl[0]), tuple(cl[1])),
+                                 "segment": ((wx1, wy1), (wx2, wy2)),
                                  # context evidence channel (see
                                  # SHEAR_WALL_ADAPTER.context_key)
-                                 "level": w.get("level")})
+                                 "level": w.get("level"),
+                                 # orientation evidence channel; model-space
+                                 # direction, compared against the drawn
+                                 # wall's direction on the sheet
+                                 "orientation_deg": math.degrees(
+                                     math.atan2(wy2 - wy1, wx2 - wx1)) % 180.0})
     # Walls: a drawn SW run maps to SEVERAL Revit wall segments, and the
     # callout bubble sits off the run — wall-appropriate gates + absorb
     # unclaimed same-mark segments near a matched device.

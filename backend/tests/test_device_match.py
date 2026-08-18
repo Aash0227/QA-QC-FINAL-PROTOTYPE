@@ -315,3 +315,71 @@ def test_holdown_adapter_has_no_context_channel():
     Gate 3 hold-down behavior against accidental change."""
     assert dm.HOLDOWN_ADAPTER.context_key is None
     assert dm.SHEAR_WALL_ADAPTER.context_key == "level"
+
+
+# ------------------- Shear Wall: PDF-side orientation evidence channel
+
+def test_orientation_breaks_ambiguity_when_only_one_candidate_agrees():
+    """The drawn wall's direction, measured from the sheet's own vector
+    geometry (pdf_wall_geometry), is real PDF<->model evidence: when two
+    same-mark candidates are equidistant but run in different directions,
+    the one matching the DRAWN direction is the wall the callout refers to."""
+    row = {"id": "S1_sw1_a", "sheet": "S1", "category": "shear_wall",
+           "mark": "SW-1", "status": "PDF_ONLY",
+           "pdf_point": _pdf_point_for(10, 10),
+           "orientation_deg": 90.0}          # drawn wall runs vertically
+    walls = [
+        # equidistant from the callout, but only one runs vertically
+        {"id": "w_vert", "type_name": "X SW1", "level": "Level 1",
+         "centerline": [[11.0, 5.0], [11.0, 15.0]]},
+        {"id": "w_horiz", "type_name": "X SW1", "level": "Level 1",
+         "centerline": [[5.0, 11.0], [15.0, 11.0]]},
+    ]
+    reg = dm.run([row], CALS, [], walls=walls)
+    dev = reg["categories"]["shear_wall"]["devices"][0]
+    assert dev.get("resolved_by") == "orientation", dev
+    assert dev["target_id"] == "w_vert", dev
+    assert "90" in dev["reason"]
+
+
+def test_orientation_refuses_when_both_candidates_share_direction():
+    """Two parallel same-mark walls are not distinguishable by direction --
+    the channel must stay silent rather than pick arbitrarily."""
+    row = {"id": "S1_sw1_a", "sheet": "S1", "category": "shear_wall",
+           "mark": "SW-1", "status": "PDF_ONLY",
+           "pdf_point": _pdf_point_for(10, 10), "orientation_deg": 90.0}
+    walls = [
+        {"id": "w_a", "type_name": "X SW1", "level": "Level 1",
+         "centerline": [[10.6, 5.0], [10.6, 15.0]]},
+        {"id": "w_b", "type_name": "X SW1", "level": "Level 1",
+         "centerline": [[9.4, 5.0], [9.4, 15.0]]},
+    ]
+    reg = dm.run([row], CALS, [], walls=walls)
+    dev = reg["categories"]["shear_wall"]["devices"][0]
+    assert dev.get("resolved_by") is None, dev
+    assert dev["status"] == "NEEDS_REVIEW", dev
+
+
+def test_orientation_channel_dormant_without_pdf_geometry():
+    """A callout whose drawn wall could not be extracted carries no
+    orientation, and must behave exactly as before the channel existed."""
+    row = {"id": "S1_sw1_a", "sheet": "S1", "category": "shear_wall",
+           "mark": "SW-1", "status": "PDF_ONLY",
+           "pdf_point": _pdf_point_for(10, 10)}     # no orientation_deg
+    walls = [
+        {"id": "w_vert", "type_name": "X SW1", "level": "Level 1",
+         "centerline": [[11.0, 5.0], [11.0, 15.0]]},
+        {"id": "w_horiz", "type_name": "X SW1", "level": "Level 1",
+         "centerline": [[5.0, 11.0], [15.0, 11.0]]},
+    ]
+    reg = dm.run([row], CALS, [], walls=walls)
+    dev = reg["categories"]["shear_wall"]["devices"][0]
+    assert dev.get("resolved_by") is None, dev
+    assert dev["status"] == "NEEDS_REVIEW", dev
+
+
+def test_holdown_adapter_has_no_orientation_channel():
+    """Hold-down assemblies are point hardware with no meaningful direction;
+    the validated Gate 3 behavior must stay untouched."""
+    assert dm.HOLDOWN_ADAPTER.orientation_tolerance_deg is None
+    assert dm.SHEAR_WALL_ADAPTER.orientation_tolerance_deg == 20.0
