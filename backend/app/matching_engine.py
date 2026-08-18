@@ -291,6 +291,10 @@ def assign(devices: list[dict[str, Any]],
     # candidate agrees.
     resolve_ambiguity_by_orientation(devices, targets, config)
     resolve_ambiguity_by_context(devices, targets, config, registration_quality)
+    # Diagnostics for whatever the channels could NOT resolve. Status is
+    # never touched here -- this only tells the reviewer what the evidence
+    # conflict actually is.
+    annotate_evidence_conflicts(devices, targets, config)
     known_marks = {t.get("mark") for t in targets}
     for d in devices:
         if "status" not in d:
@@ -411,6 +415,83 @@ def sheet_context_consensus(devices: list[dict[str, Any]],
         if count / len(values) >= config.context_min_consensus:
             consensus[sheet] = top
     return consensus
+
+
+def orientation_compatible(device: dict[str, Any], target: dict[str, Any],
+                           tolerance_deg: float | None) -> bool:
+    """Does the DRAWN element's direction agree with this candidate's?
+
+    True whenever the channel is off or either side lacks a measured
+    orientation -- missing evidence must never count against a candidate,
+    only present-and-disagreeing evidence does."""
+    if tolerance_deg is None:
+        return True
+    d_deg, t_deg = device.get("orientation_deg"), target.get("orientation_deg")
+    if not isinstance(d_deg, (int, float)) or not isinstance(t_deg, (int, float)):
+        return True
+    return _orientation_delta(d_deg, t_deg) <= tolerance_deg
+
+
+def annotate_evidence_conflicts(devices: list[dict[str, Any]],
+                                targets: list[dict[str, Any]],
+                                config: AdapterConfig) -> None:
+    """Explain WHY an unresolved ambiguity stayed unresolved. Never changes
+    a status -- diagnostics only.
+
+    Two conflicts are worth a reviewer's attention, and neither is safely
+    auto-resolvable with today's evidence quality:
+
+      * the drawn element disagrees with EVERY candidate -- the right
+        element is probably outside the search range or absent from the
+        model, which is a finding, not a tie;
+      * the one direction-matching candidate was already claimed by a
+        different callout -- genuine contention, where picking a winner
+        would mean stealing another callout's element.
+
+    Both were measured on real data before being left as annotations:
+    promoting orientation to a claim-ordering or candidate-scoping key was
+    implemented and tested, and it resolved 3 ambiguities while costing a
+    MATCH and turning 4 pairings into LOCATION_MISMATCH -- the drawn
+    orientation carries off-axis outliers (a hatch run clustered across a
+    corner reads e.g. 159 deg on an axis-aligned wall), and one drawn run
+    can span several model segments whose directions differ at corners.
+    Evidence strong enough to refute a near-tie is not automatically strong
+    enough to drive assignment."""
+    tol = config.orientation_tolerance_deg
+    if tol is None:
+        return
+    by_id = {t["id"]: t for t in targets}
+    claimant = {d["target_id"]: d for d in devices if d.get("target_id")}
+    for d in devices:
+        if d.get("status") != "NEEDS_REVIEW" or not d.get("_ambiguous"):
+            continue
+        drawn = d.get("orientation_deg")
+        if not isinstance(drawn, (int, float)):
+            continue
+        cands = [by_id[c] for c in d.get("_ambiguous_candidates", []) if c in by_id]
+        if not cands:
+            continue
+        if not any(orientation_compatible(d, t, tol) for t in cands):
+            d["evidence_conflict"] = "drawn_orientation_matches_no_candidate"
+            d["reason"] += (
+                f" NOTE: the wall drawn here runs at {drawn:.0f}° but every "
+                "candidate offered runs a different way — the matching "
+                "element is likely outside the search range or absent from "
+                "the model; check for a missing wall before treating this "
+                "as a tie.")
+            continue
+        taken = [t for t in cands
+                 if orientation_compatible(d, t, tol) and t["id"] in claimant]
+        if taken and all(t["id"] in claimant for t in cands
+                         if orientation_compatible(d, t, tol)):
+            other = claimant[taken[0]["id"]]
+            other_ref = (other.get("appearances") or ["another callout"])[0]
+            d["evidence_conflict"] = "orientation_match_claimed_by_other_device"
+            d["reason"] += (
+                f" NOTE: the only candidate matching the drawn direction "
+                f"({drawn:.0f}°) is already assigned to {other_ref} — two "
+                "callouts are competing for one element; confirm which "
+                "callout owns it.")
 
 
 def _orientation_delta(p: float, q: float) -> float:

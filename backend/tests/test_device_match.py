@@ -410,3 +410,39 @@ def test_unpaired_callout_still_carries_drawn_orientation():
     assert row["verdict"] == "PDF_ONLY", row
     assert row.get("orientation_deg") is not None, row
     assert abs(row["orientation_deg"] - 90.0) < 1.0, row
+
+
+# ------------------ Shear Wall: evidence-conflict diagnostics (no verdict change)
+
+def test_drawn_orientation_matching_no_candidate_is_flagged():
+    """When the drawn wall disagrees with EVERY candidate, the device is not
+    really facing a tie -- the right element is probably out of range or
+    missing from the model. That is a finding a reviewer must see, so it is
+    named explicitly rather than left as a bare 'ambiguous'."""
+    row = {"id": "S1_sw1_a", "sheet": "S1", "category": "shear_wall",
+           "mark": "SW-1", "status": "PDF_ONLY",
+           "pdf_point": _pdf_point_for(10, 10),
+           "orientation_deg": 90.0}              # drawn wall is vertical
+    walls = [  # two near-tied candidates, BOTH horizontal
+        {"id": "w_a", "type_name": "X SW1", "level": "Level 1",
+         "centerline": [[5.0, 10.6], [15.0, 10.6]]},
+        {"id": "w_b", "type_name": "X SW1", "level": "Level 1",
+         "centerline": [[5.0, 9.4], [15.0, 9.4]]},
+    ]
+    dev = dm.run([row], CALS, [], walls=walls)["categories"]["shear_wall"]["devices"][0]
+    assert dev["status"] == "NEEDS_REVIEW", dev          # verdict unchanged
+    assert dev.get("evidence_conflict") == "drawn_orientation_matches_no_candidate"
+    assert "absent from the model" in dev["reason"]
+
+
+def test_evidence_conflict_annotation_never_changes_a_verdict():
+    """The diagnostics pass is additive: same statuses with and without it."""
+    rows = _sw_rows(4)
+    walls = _stacked_walls(unstacked=(0, 1, 2))
+    before = {tuple(d["appearances"]): d["status"]
+              for d in dm.run(rows, CALS, [], walls=walls)["categories"]["shear_wall"]["devices"]}
+    # same input, now with drawn orientations attached to every callout
+    rows2 = [dict(r, orientation_deg=90.0) for r in _sw_rows(4)]
+    after = {tuple(d["appearances"]): d["status"]
+             for d in dm.run(rows2, CALS, [], walls=walls)["categories"]["shear_wall"]["devices"]}
+    assert before == after, (before, after)
