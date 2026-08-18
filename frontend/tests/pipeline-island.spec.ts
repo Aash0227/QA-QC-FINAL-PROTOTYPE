@@ -11,7 +11,7 @@
 import { test, expect } from "@playwright/test";
 
 const BASE = "http://127.0.0.1:8077";
-const URL = `${BASE}/react.html`;
+const URL = `${BASE}/pipeline.html`;
 
 test.describe("Pipeline Island", () => {
   test("renders with 7 stages from the live backend", async ({ page }) => {

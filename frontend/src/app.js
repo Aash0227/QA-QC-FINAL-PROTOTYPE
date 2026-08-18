@@ -13,7 +13,6 @@ import { renderTabs, showSheet, renderLayerToggles, syncIsolation } from "./pane
 import { loadScene, resize3D, resetView3D } from "./panels/viewer3d.js";
 import { renderCC, openDrawer } from "./panels/inspector.js";
 import { paintRevitPill } from "./panels/revit_live.js";
-import { openProjects } from "./panels/projects.js";
 import "./panels/table.js";
 import "./panels/wizard.js";
 import "./panels/chat.js";
@@ -26,9 +25,12 @@ window.tokenized = tokenized;
 
 /* ---------------- project label ----------------
    Creating, switching and deleting projects all live in the Project Manager
-   overlay (panels/projects.js). The header keeps only the name of the project
-   you are looking at, which is the one thing you need on screen at all times —
-   every verdict below it is scoped to this workspace. */
+   overlay — migrated to React (src/react/features/project-manager), mounted
+   by src/react/dashboard-main.tsx and opened via a window event rather than
+   a direct import (see that file's header comment for why). The header here
+   keeps only the name of the project you are looking at, which is the one
+   thing you need on screen at all times — every verdict below it is scoped
+   to this workspace. */
 async function paintProjectName() {
   try {
     const p = await api("/api/projects");
@@ -39,7 +41,7 @@ async function paintProjectName() {
     $("#btn-projects").title = `Project: ${cur.display_name} (${cur.slug}) — click to manage projects`;
   } catch { /* leave the generic "Projects" label */ }
 }
-$("#btn-projects").onclick = openProjects;
+$("#btn-projects").onclick = () => window.dispatchEvent(new CustomEvent("open-project-manager"));
 
 /* ---------------- data load ---------------- */
 export async function loadAll(first = false) {
@@ -121,180 +123,15 @@ document.addEventListener("click", ev => {
 document.addEventListener("keydown", ev => {
   if (ev.key === "Escape") {
     if ($("#adv-menu")?.open) return ($("#adv-menu").open = false);
-    if ($("#pipe-modal").classList.contains("open")) return $("#pipe-modal").classList.remove("open");
     store.selected = null; renderList(); syncIsolation();
     resetView3D();
   }
 });
 
-/* ---------------- pipeline modal — guided QA/QC flow ---------------- */
-function pipeState() {
-  // State: "upload_pdf" | "upload_revit" | "ready" | "running" | "complete"
-  // Check run_state first (background runs survive page refresh), fall back to
-  // artifact checklist for older/disabled-run states.
-  return api("/api/pipeline/run").then(rs => {
-    if (rs && rs.status === "running") return "running";
-    return api("/api/pipeline/status").then(st => {
-      if (!st.steps) return "upload_pdf";
-      const d = Object.fromEntries(st.steps.map(s => [s.key, s.done]));
-      if (d.match) return "complete";
-      if (d.upload && d.revit_convert) return "ready";
-      if (d.upload) return "upload_revit";
-      return "upload_pdf";
-    });
-  }).catch(() => api("/api/pipeline/status").then(st => {
-    // no run yet — use artifact state
-    if (!st?.steps) return "upload_pdf";
-    const d = Object.fromEntries(st.steps.map(s => [s.key, s.done]));
-    if (d.match) return "complete";
-    if (d.upload) return "upload_revit";
-    return "upload_pdf";
-  })).catch(() => "upload_pdf");
-}
-
-async function renderPipeline() {
-  const body = $("#pipe-body");
-  const state = await pipeState();
-  if (state === "running") {
-    body.innerHTML = `<div class="pipe-guide">
-      <div class="pipe-running">⏳ Pipeline running…</div>
-      <div id="pipe-stage-list"></div>
-    </div>`;
-    pollRunState();
-    return;
-  }
-  if (state === "upload_pdf") {
-    body.innerHTML = `<div class="pipe-guide">
-      <div class="pipe-drop glass" id="pipe-drop">
-        <div class="pipe-drop-icon">📄</div>
-        <p class="pipe-drop-label">Drop the structural PDF here</p>
-        <p class="pipe-drop-hint">PDF is required to begin &middot; click to browse</p>
-        <input id="up-pdf" type="file" accept=".pdf" style="display:none">
-      </div>
-      <p class="pipe-note">Or upload the <a href="#" id="pipe-adv-revit">Revit export JSON instead</a> (advanced)</p>
-    </div>`;
-    const drop = $("#pipe-drop"), input = $("#up-pdf");
-    drop.onclick = () => input.click();
-    drop.ondragover = e => { e.preventDefault(); drop.classList.add("drag-over"); };
-    drop.ondragleave = () => drop.classList.remove("drag-over");
-    drop.ondrop = e => { e.preventDefault(); drop.classList.remove("drag-over");
-      if (e.dataTransfer.files[0]) pdfUpload(e.dataTransfer.files[0]); };
-    input.onchange = () => input.files[0] && pdfUpload(input.files[0]);
-    const adv = $("#pipe-adv-revit");
-    if (adv) adv.onclick = (e) => { e.preventDefault(); showRevitOnly(); };
-    return;
-  }
-  if (state === "upload_revit") {
-    body.innerHTML = `<div class="pipe-guide">
-      <div class="pipe-done">✓ Drawings read — ${store.elements?.length || "?"} elements detected</div>
-      <div class="pipe-drop glass" id="pipe-drop-revit">
-        <div class="pipe-drop-icon">🏗</div>
-        <p class="pipe-drop-label">Upload the Revit export JSON</p>
-        <p class="pipe-drop-hint">In Revit: Livio QA-QC tab → Export → upload the resulting JSON</p>
-        <input id="up-revit" type="file" accept=".json" style="display:none">
-      </div>
-    </div>`;
-    const drop = $("#pipe-drop-revit"), input = $("#up-revit");
-    drop.onclick = () => input.click();
-    drop.ondragover = e => { e.preventDefault(); drop.classList.add("drag-over"); };
-    drop.ondragleave = () => drop.classList.remove("drag-over");
-    drop.ondrop = e => { e.preventDefault(); drop.classList.remove("drag-over");
-      if (e.dataTransfer.files[0]) revitUpload(e.dataTransfer.files[0]); };
-    input.onchange = () => input.files[0] && revitUpload(input.files[0]);
-    return;
-  }
-  if (state === "ready") {
-    const el = await api("/api/elements").catch(() => ({ counts: { total: "?" } }));
-    body.innerHTML = `<div class="pipe-guide">
-      <div class="pipe-done">✓ Drawings ready · Revit model loaded</div>
-      <button class="primary" id="pipe-run-btn" style="font-size:16px;padding:12px 32px;margin:20px 0">▶ Run QA/QC</button>
-      <p class="pipe-note">This compares the full drawing set to the model — may take a minute.</p>
-    </div>`;
-    $("#pipe-run-btn").onclick = () => startRun();
-    return;
-  }
-  if (state === "complete") {
-    const el = await api("/api/elements").catch(() => ({ counts: {}, elements: [] }));
-    const c = el.counts || {};
-    body.innerHTML = `<div class="pipe-guide">
-      <div class="pipe-done">✓ QA/QC complete — ${c.total || 0} elements analysed</div>
-      <div class="pipe-counts">${Object.entries(c.by_status||{}).map(([k,v]) =>
-        `<span class="pipe-chip chip-${k}">${v} ${k.replace(/_/g,' ')}</span>`).join(" ")}</div>
-      <button class="primary" id="pipe-review-btn" style="margin-top:16px">Open results</button>
-      <p class="pipe-note"><a href="#" id="pipe-rerun">Re-run</a> after updating files</p>
-    </div>`;
-    $("#pipe-review-btn").onclick = () => { $("#pipe-modal").classList.remove("open"); };
-    $("#pipe-rerun")?.addEventListener("click", (e) => { e.preventDefault(); startRun(true); });
-    return;
-  }
-}
-
-async function pdfUpload(file) {
-  const fd = new FormData(); fd.append("pdf", file);
-  try {
-    const m = await api("/api/upload", { method: "POST", body: fd });
-    toast(`PDF uploaded (${m.page_count || "?"} pages). Processing…`);
-    await startRun(false);  // auto-run PDF-side stages
-  } catch (e) { toast("Upload failed: " + e.message, true); renderPipeline(); }
-}
-async function revitUpload(file) {
-  const fd = new FormData(); fd.append("revit_json", file);
-  try {
-    await api("/api/upload", { method: "POST", body: fd });
-    toast("Revit export uploaded. Continuing…");
-    await startRun(false);  // auto-run remaining stages
-  } catch (e) { toast("Upload failed: " + e.message, true); renderPipeline(); }
-}
-async function showRevitOnly() {
-  // Show a Revit JSON file input inline (advanced path).
-  $("#pipe-body").innerHTML = `<div class="pipe-guide">
-    <label class="file" style="display:block;margin:20px auto;max-width:320px">Revit export JSON<input id="up-revit" type="file" accept=".json"></label>
-    <button class="mini" id="pipe-upload-rv-btn">Upload</button>
-    <button class="mini" id="pipe-back">← Back</button>
-  </div>`;
-  $("#pipe-upload-rv-btn").onclick = () => { const f = $("#up-revit").files[0]; f && revitUpload(f); };
-  $("#pipe-back").onclick = renderPipeline;
-}
-
-async function startRun(force = false) {
-  $("#pipe-body").innerHTML = `<div class="pipe-guide">
-    <div class="pipe-running">⏳ Running QA/QC pipeline… this may take a minute.</div>
-    <div id="pipe-stage-list"></div>
-  </div>`;
-  try {
-    // 202 = background run started; poll the persisted run state until it settles.
-    await api("/api/pipeline/run" + (force ? "?force=true" : ""), { method: "POST" });
-    pollRunState();
-  } catch (e) {
-    if (e.message?.includes("already in progress") || e.status === 409) {
-      // Reuse the in-flight run.
-      toast("Run already in progress — showing live state.");
-      pollRunState();
-    } else {
-      toast("QA/QC run failed: " + e.message, true);
-      renderPipeline();
-    }
-  }
-}
-
-async function pollRunState() {
-  const list = $("#pipe-stage-list");
-  try {
-    const rs = await api("/api/pipeline/run");
-    if (rs && rs.status === "running" && list) {
-      list.innerHTML = rs.stages.map(s => `<div class="pipe-stage pipe-${s.status}">
-        ${s.status === "running" ? "◌" : s.status === "done" ? "✓" : s.status === "failed" ? "✗" : "·"}
-        ${s.title} ${s.duration_s ? `(${s.duration_s}s)` : ""}</div>`).join("");
-      setTimeout(pollRunState, 1500);
-      return;
-    }
-  } catch { /* 404 = no run — fall through */ }
-  await loadAll();
-  renderPipeline();
-}
-
+/* ⚡ Pipeline navigates to the React Pipeline Island — the vanilla guided
+   upload/run modal (pipeState/renderPipeline/startRun/pollRunState/
+   pdfUpload/revitUpload/showRevitOnly) was superseded by it and removed. */
 $("#btn-pipe").onclick = () => { window.location.href = "/pipeline.html"; };
-$("#btn-pipe-close").onclick = () => $("#pipe-modal").classList.remove("open");
 
 /* ---------------- boot ---------------- */
 paintProjectName();

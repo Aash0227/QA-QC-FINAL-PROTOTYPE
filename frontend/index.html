@@ -50,6 +50,12 @@
     </div>
   </header>
 
+  <!-- Benchmark Autopilot approval banner mount point (Wizard.tsx's
+       WizardBanner) — the original vanilla code inserted this element
+       dynamically at the same position (insertAdjacentElement("beforebegin")
+       on #main); a static empty placeholder is equivalent and lower-risk. -->
+  <div id="wizard-banner-root"></div>
+
   <div id="main">
     <!-- LEFT: grouped element list -->
     <div id="left">
@@ -233,24 +239,13 @@
 </div>
 
 <!-- Project Manager overlay: create / open / rename / delete a workspace.
-     Same show-hide-by-class pattern as #pipe-modal; content is rendered by
-     src/panels/projects.js. -->
-<div id="projects" role="dialog" aria-modal="true" aria-labelledby="pm-title" aria-hidden="true">
-  <div id="pm-inner">
-    <div class="glass pm-head">
-      <h2 id="pm-title">Projects</h2>
-      <span class="badge" id="pm-count">–</span>
-      <span style="flex:1"></span>
-      <button class="primary" id="pm-new">＋ New project</button>
-      <button class="mini" id="pm-close">✕ Close</button>
-    </div>
-    <div id="pm-form-slot"></div>
-    <div id="pm-grid"></div>
-  </div>
-  <div id="pm-confirm" role="alertdialog" aria-modal="true">
-    <div class="glass" id="pm-confirm-body"></div>
-  </div>
-</div>
+     Migrated to React (Stage 1 of the frontend migration) — rendered by
+     src/react/features/project-manager/ProjectManager.tsx into the mount
+     point below via src/react/dashboard-main.tsx. Opened by dispatching the
+     "open-project-manager" window event (see src/app.js's #btn-projects
+     handler) rather than a direct import, so this vanilla page never
+     imports React internals. -->
+<div id="dashboard-react-root"></div>
 
 <!-- Pipeline modal — guided QA/QC flow (no manual steps) -->
 <div id="pipe-modal">
@@ -268,5 +263,6 @@
 
 <script type="module" src="src/kinetic-grid.js"></script>
 <script type="module" src="src/app.js"></script>
+<script type="module" src="src/react/dashboard-main.tsx"></script>
 </body>
 </html>

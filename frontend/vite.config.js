@@ -1,9 +1,8 @@
-/* vite.config.js — bundles the existing vanilla ES-module app AND the new
-   React shell (src/react/, entry react.html) under one build.
+/* vite.config.js — bundles the existing vanilla ES-module app AND the
+   React shell (src/react/, entry pipeline.html) under one build.
 
    - index.html (vanilla panels) stays the default entry and behavior.
-   - react.html builds the React foundation shell served at /react.html —
-     the sandbox for the Phase 3+ Pipeline UI migration.
+   - pipeline.html builds the React Pipeline Island, served at /pipeline.html.
    - Tailwind v4 runs through @tailwindcss/vite and only processes
      src/react/index.css, so the legacy app.css/tokens.css are untouched.
    - "@/*" aliases src/react/* (shadcn convention @/components/ui, @/lib/utils).
