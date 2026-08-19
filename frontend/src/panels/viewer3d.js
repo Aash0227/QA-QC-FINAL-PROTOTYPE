@@ -249,13 +249,13 @@ function build3D() {
 
   const infoBall = new THREE.Mesh(
     new THREE.SphereGeometry(1.15, 20, 16),
-    new THREE.MeshStandardMaterial({ color: 0x5eead4, emissive: 0x5eead4, emissiveIntensity: 1.1,
+    new THREE.MeshStandardMaterial({ color: 0x22d3ee, emissive: 0x22d3ee, emissiveIntensity: 1.1,
       transparent: true, opacity: .95 }));
   infoBall.visible = false;
   infoBall.userData = { kind: "info_ball" };
   const ballRing = new THREE.Mesh(
     new THREE.TorusGeometry(1.8, .09, 10, 40),
-    new THREE.MeshBasicMaterial({ color: 0x5eead4, transparent: true, opacity: .7 }));
+    new THREE.MeshBasicMaterial({ color: 0x22d3ee, transparent: true, opacity: .7 }));
   ballRing.rotation.x = Math.PI / 2;
   infoBall.add(ballRing);
   scene.add(infoBall);
@@ -293,7 +293,7 @@ function build3D() {
     if (hit) {
       hovered = hit.object;
       if (hovered.material.emissive && hovered.userData.kind !== "info_ball") {
-        hovered.material.emissive = new THREE.Color(0x5eead4); hovered.material.emissiveIntensity = .5;
+        hovered.material.emissive = new THREE.Color(0x22d3ee); hovered.material.emissiveIntensity = .5;
       }
       const u = hovered.userData;
       tip.style.display = "block";

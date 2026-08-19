@@ -110,10 +110,23 @@ export function ElementList() {
 
         return (
           <Fragment key={cat}>
+            {/* Expanders are real buttons for the keyboard. They were plain
+                divs with onClick, so a keyboard-only reviewer could not open a
+                category at all -- the entire element list was unreachable
+                without a mouse. */}
             <div
               className={`cat-hdr ${open ? "open" : ""}`}
               data-cat={cat}
+              role="button"
+              tabIndex={0}
+              aria-expanded={open}
               onClick={() => toggleCat(cat)}
+              onKeyDown={(ev) => {
+                if (ev.key === "Enter" || ev.key === " ") {
+                  ev.preventDefault();
+                  toggleCat(cat);
+                }
+              }}
             >
               <span className="car">▶</span>
               {LABELS[cat]} <span className="cnt">{list.length}</span>
@@ -126,7 +139,20 @@ export function ElementList() {
                 const mopen = searching || store.openMarks.has(mkey);
                 return (
                   <Fragment key={mkey}>
-                    <div className="mark-hdr" data-mark={mkey} onClick={() => toggleMark(mkey)}>
+                    <div
+                      className="mark-hdr"
+                      data-mark={mkey}
+                      role="button"
+                      tabIndex={0}
+                      aria-expanded={mopen}
+                      onClick={() => toggleMark(mkey)}
+                      onKeyDown={(ev) => {
+                        if (ev.key === "Enter" || ev.key === " ") {
+                          ev.preventDefault();
+                          toggleMark(mkey);
+                        }
+                      }}
+                    >
                       <span className="car" style={mopen ? { transform: "rotate(90deg)" } : undefined}>
                         ▶
                       </span>

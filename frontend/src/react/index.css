@@ -29,7 +29,10 @@
   --color-destructive-foreground: #ffffff;
   --color-border: #2e2e33;
   --color-input: #2e2e33;
-  --color-ring: #06adf5;
+  /* Focus ring follows the accent. It was still the old Livio blue, two
+     lines below a --color-primary that had already moved to cyan, so the
+     pipeline page focused things in a colour it used nowhere else. */
+  --color-ring: #22D3EE;
 
   --radius-sm: 0.25rem;
   --radius-md: 0.5rem;

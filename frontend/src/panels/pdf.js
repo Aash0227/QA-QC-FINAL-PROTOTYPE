@@ -138,15 +138,15 @@ $("#viewport").addEventListener("click", ev => {
   measure.pts.push([px, py]);
   const ml = $("#measure-layer");
   if (measure.pts.length === 1) {
-    ml.innerHTML = `<circle cx="${px}" cy="${py}" r="4" fill="#5eead4"/>`;
+    ml.innerHTML = `<circle cx="${px}" cy="${py}" r="4" fill="#22d3ee"/>`;
   } else {
     const [[ax, ay], [bx, by]] = measure.pts;
     const dpt = Math.hypot(bx - ax, by - ay);
     const scale = store.sheetScale[store.activeSheet];
     const label = scale ? `${dpt.toFixed(1)} pt · ${(dpt / scale).toFixed(2)} ft` : `${dpt.toFixed(1)} pt (scale unverified)`;
-    ml.innerHTML = `<line x1="${ax}" y1="${ay}" x2="${bx}" y2="${by}" stroke="#5eead4" stroke-width="2"/>
-      <circle cx="${ax}" cy="${ay}" r="4" fill="#5eead4"/><circle cx="${bx}" cy="${by}" r="4" fill="#5eead4"/>
-      <text x="${(ax + bx) / 2 + 8}" y="${(ay + by) / 2 - 8}" fill="#5eead4">${label}</text>`;
+    ml.innerHTML = `<line x1="${ax}" y1="${ay}" x2="${bx}" y2="${by}" stroke="#22d3ee" stroke-width="2"/>
+      <circle cx="${ax}" cy="${ay}" r="4" fill="#22d3ee"/><circle cx="${bx}" cy="${by}" r="4" fill="#22d3ee"/>
+      <text x="${(ax + bx) / 2 + 8}" y="${(ay + by) / 2 - 8}" fill="#22d3ee">${label}</text>`;
     measure.pts = [];
   }
 });

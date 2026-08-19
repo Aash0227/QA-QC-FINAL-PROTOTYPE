@@ -93,7 +93,7 @@ export default function KineticGrid({
       bg: "#161618",
       lineActive: { r: 74, g: 158, b: 255, a: 0.9 },
       nodeActive: { r: 74, g: 158, b: 255, a: 1.0 },
-      glow: "74,158,255",
+      glow: "34,211,238",   // matches --signal / --color-primary
       ripple: "100,180,255",
     };
     ctx.fillStyle = theme.bg;
