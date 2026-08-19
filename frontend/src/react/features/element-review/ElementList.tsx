@@ -73,7 +73,30 @@ export function ElementList() {
   const groups = CAT_LIST.filter((cat) => byCat[cat]);
 
   if (!groups.length) {
-    return <div className="empty-state">No elements match.</div>;
+    // An empty list must always say WHY it is empty and offer the way out.
+    // The verdict filter is set from a different pane (the verdict bar above
+    // the results), so a reviewer who lands here can otherwise be left
+    // staring at "No elements match." with no idea what to undo.
+    const vf = (store as Record<string, unknown>).verdictFilter as string | null;
+    return (
+      <div className="empty-state">
+        No elements match.
+        {vf && (
+          <>
+            {" "}
+            <button
+              className="mini"
+              onClick={() => {
+                (store as Record<string, unknown>).verdictFilter = null;
+                emit("refresh");
+              }}
+            >
+              Clear {(VLABEL[vf] || vf).toLowerCase()} filter
+            </button>
+          </>
+        )}
+      </div>
+    );
   }
 
   return (
