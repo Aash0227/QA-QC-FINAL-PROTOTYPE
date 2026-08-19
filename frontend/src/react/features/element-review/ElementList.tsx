@@ -30,10 +30,12 @@ function DotBar({ items }: { items: ElementRow[] }) {
   const ORDER = ["LOCATION_MISMATCH", "NEEDS_REVIEW", "LOCATION_MATCH", "NOT_APPLICABLE"];
   const entries = Object.entries(counts)
     .sort(([a], [b]) => ORDER.indexOf(a) - ORDER.indexOf(b));
+  // Titles stay lowercase, matching the convention statusLabel() set for every
+  // other titled count in the app (asserted by tests/projects.spec.js).
   return (
     <span className="mini-dots">
       {entries.map(([v, n]) => (
-        <span key={v} title={`${n} ${VLABEL[v] || v}`}>
+        <span key={v} title={`${n} ${(VLABEL[v] || v).toLowerCase()}`}>
           <span className="dot" style={{ background: VCOL[v] }}>
             {VGLYPH[v] || ""}
           </span>
