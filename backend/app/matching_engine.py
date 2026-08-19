@@ -910,6 +910,32 @@ def product_result(row: dict[str, Any]) -> dict[str, Any]:
             "evidence": evidence}
 
 
+def ensure_product_blocks(payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Guarantee an element-list payload carries product verdicts.
+
+    Artifacts written before the product layer existed have no `product` block
+    and no `product_counts`. Every reader needs the same answer, so the
+    backfill lives here rather than being repeated at each call site -- the
+    HTTP endpoint and the QA/QC agent both go through this, which is what
+    stops the screen and the agent from disagreeing about a verdict.
+
+    Pure and idempotent: the collapse is a function of `status` alone, so a
+    backfilled payload is identical to a freshly-written one, and an existing
+    block is never overwritten. Mutates in place and returns the payload."""
+    if not isinstance(payload, dict):
+        return payload
+    elements = payload.get("elements")
+    if not isinstance(elements, list) or not elements:
+        return payload
+    rows = [e for e in elements if isinstance(e, dict)]
+    for row in rows:
+        if not row.get("product"):
+            row["product"] = product_result(row)
+    if not payload.get("product_counts"):
+        payload["product_counts"] = summarize_product_verdicts(rows)
+    return payload
+
+
 def summarize_product_verdicts(rows: Iterable[dict[str, Any]]) -> dict[str, int]:
     """Product-level counts: how many elements the system can actually answer
     for, and how many still need a human."""

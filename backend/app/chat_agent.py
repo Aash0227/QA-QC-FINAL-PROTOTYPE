@@ -237,7 +237,15 @@ def _load(key: str) -> dict[str, Any] | None:
 
 
 def _elements() -> list[dict[str, Any]]:
-    return (_load("element_list") or {}).get("elements", [])
+    """Element rows, always carrying product verdicts.
+
+    Goes through the same backfill the HTTP endpoint uses so the agent can
+    never describe a verdict differently from the screen the reviewer is
+    looking at."""
+    from . import matching_engine
+
+    payload = matching_engine.ensure_product_blocks(_load("element_list")) or {}
+    return payload.get("elements", [])
 
 
 _ROW_COLS = ("mark", "category", "sheet", "status", "distance_ft")

@@ -57,16 +57,8 @@ def elements_get() -> JSONResponse:
     the collapse is applied here at read time when it is missing. It is a
     pure function of `status`, so a backfilled response is identical to a
     freshly-written one."""
-    payload = load_artifact("element_list")
-    if isinstance(payload, dict) and payload.get("elements") is not None:
-        elements = payload.get("elements") or []
-        if elements and not payload.get("product_counts"):
-            for el in elements:
-                if isinstance(el, dict) and not el.get("product"):
-                    el["product"] = matching_engine.product_result(el)
-            payload["product_counts"] = matching_engine.summarize_product_verdicts(
-                [e for e in elements if isinstance(e, dict)])
-    return JSONResponse(payload)
+    return JSONResponse(
+        matching_engine.ensure_product_blocks(load_artifact("element_list")))
 
 
 @router.get("/api/devices")
