@@ -14,7 +14,10 @@
   --color-card-foreground: #f4f4f5;
   --color-popover: rgba(29, 29, 32, 0.55);
   --color-popover-foreground: #f4f4f5;
-  --color-primary: #06adf5; /* Livio blue */
+  /* Matches --signal in tokens.css so the pipeline page and the dashboard
+     read as one product rather than two. Was #06adf5 (Livio blue) against the
+     dashboard's teal. */
+  --color-primary: #22D3EE;
   --color-primary-foreground: #06131a;
   --color-secondary: #26262b;
   --color-secondary-foreground: #e4e4e7;

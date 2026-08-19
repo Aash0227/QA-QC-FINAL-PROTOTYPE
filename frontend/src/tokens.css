@@ -18,7 +18,13 @@
   --line:#262B33;
   --paper:#ECE9E1;    /* primary text */
   --dim:#9AA0A6;
-  --signal:#5EEAD4;   /* accent */
+  /* One accent for the whole product. The dashboard was on teal #5EEAD4 while
+     the pipeline page used Livio blue #06adf5, so the two screens read as two
+     different products. #22D3EE sits between them -- neither page looks
+     recoloured -- and measures 10.8:1 on the #0B0D10 ground.
+     Accent means "you can act on this". It is deliberately never used for a
+     verdict: verdict colours (app.css) mean "the engine decided". */
+  --signal:#22D3EE;   /* accent */
   --markup:#FF5A36;   /* corrections / destructive */
 
   /* ---- app aliases (historical names, same values — behaviour-preserving) ---- */

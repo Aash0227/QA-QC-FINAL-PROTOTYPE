@@ -108,8 +108,11 @@
       if (t > 0.3) {
         const gr = rad + lerp(0, 6, (t - 0.3) / 0.7);
         const g = ctx.createRadialGradient(p.x, p.y, rad * 0.5, p.x, p.y, gr);
-        g.addColorStop(0, `rgba(74,158,255,${(t * 0.3).toFixed(3)})`);
-        g.addColorStop(1, "rgba(74,158,255,0)");
+        // Matches --signal (#22D3EE = 34,211,238). The grid was on a third
+        // blue (74,158,255) while the two pages used teal and Livio blue, so
+        // the background subtly fought whatever sat on top of it.
+        g.addColorStop(0, `rgba(34,211,238,${(t * 0.3).toFixed(3)})`);
+        g.addColorStop(1, "rgba(34,211,238,0)");
         ctx.beginPath(); ctx.arc(p.x, p.y, gr, 0, Math.PI * 2); ctx.fillStyle = g; ctx.fill();
       }
       ctx.beginPath(); ctx.arc(p.x, p.y, rad, 0, Math.PI * 2);
