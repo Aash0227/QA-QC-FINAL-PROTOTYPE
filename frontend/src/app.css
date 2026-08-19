@@ -556,3 +556,41 @@ header{background:rgba(22,24,29,.4) !important;border-bottom:1px solid rgba(255,
   max-width: 46ch;
   overflow-wrap: anywhere;
 }
+
+/* ===========================================================================
+   RESPONSIVE
+   The dashboard had exactly two width breakpoints in the whole stylesheet
+   (header padding, and the Project Manager grid), so a 1400px laptop and a
+   700px window laid out identically and the page scrolled horizontally at
+   every size. These collapse the fixed 360px rail and the side-by-side
+   drawing/model panes before they force a horizontal scroll.
+   =========================================================================== */
+
+/* Laptop: the 360px element rail is a third of a 1100px screen. */
+@media (max-width: 1180px) {
+  #main { grid-template-columns: 300px 1fr; }
+}
+
+/* Narrow: stack the rail above the panes rather than squeezing both. */
+@media (max-width: 980px) {
+  #main { grid-template-columns: 1fr; grid-auto-rows: minmax(0, auto); }
+  #main.left-hidden { grid-template-columns: 1fr; }
+  #left { max-height: 42vh; }
+  /* Drawing and model side by side stop being readable well before this. */
+  #dual { grid-template-columns: 1fr; }
+  #dual.sheet-max { grid-template-columns: 1fr; }
+}
+
+/* Phone/small tablet: the app is not designed for this, but it must not
+   scroll sideways or clip its own controls. */
+@media (max-width: 720px) {
+  header { flex-wrap: wrap; row-gap: 6px; }
+  #main { gap: 8px; }
+  #left { max-height: 38vh; }
+  .verdict-bar__legend { gap: 4px 10px; }
+  .verdict-bar__item { padding: 3px 8px; font-size: 12px; }
+  #results-table td:last-child { max-width: 28ch; }
+}
+
+/* Nothing should ever push the page wider than the viewport. */
+html, body { max-width: 100%; overflow-x: hidden; }
