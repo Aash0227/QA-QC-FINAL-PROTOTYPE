@@ -1,6 +1,7 @@
 import { Fragment } from "react";
 
-import { COL, CATS, CAT_LABEL, GLYPH, statusLabel } from "../../../util";
+import { CATS, CAT_LABEL, statusLabel,
+         VERDICT_COL, VERDICT_GLYPH, VERDICT_LABEL, rowVerdict } from "../../../util";
 import { store, select, emit } from "../../../store";
 
 import { visibleElements } from "./elements";
@@ -9,22 +10,32 @@ import { useStoreVersion } from "./useStoreVersion";
 
 const CAT_LIST = CATS as string[];
 const LABELS = CAT_LABEL as Record<string, string>;
-const COLORS = COL as Record<string, string>;
-const GLYPHS = GLYPH as Record<string, string>;
+const VCOL = VERDICT_COL as Record<string, string>;
+const VGLYPH = VERDICT_GLYPH as Record<string, string>;
+const VLABEL = VERDICT_LABEL as Record<string, string>;
 
 /** Count-per-status dot bar on category/mark headers -- carries a glyph as
  *  well as a colour and a titled label, so the breakdown reads without
  *  colour vision and on a greyscale printout. Ported from list.js::dotBar. */
 function DotBar({ items }: { items: ElementRow[] }) {
+  // Summarises by PRODUCT VERDICT, not internal status. A header that reads
+  // "12 PDF_ONLY, 9 REVIT_ONLY, 4 LOCATION_MISMATCH" makes a reviewer do the
+  // collapsing in their head; "25 mismatch" is the same fact, already answered.
+  // Ordered worst-first so the thing needing attention leads.
   const counts: Record<string, number> = {};
-  for (const e of items) counts[e.status] = (counts[e.status] || 0) + 1;
-  const entries = Object.entries(counts).sort(([a], [b]) => a.localeCompare(b));
+  for (const e of items) {
+    const v = rowVerdict(e);
+    counts[v] = (counts[v] || 0) + 1;
+  }
+  const ORDER = ["LOCATION_MISMATCH", "NEEDS_REVIEW", "LOCATION_MATCH", "NOT_APPLICABLE"];
+  const entries = Object.entries(counts)
+    .sort(([a], [b]) => ORDER.indexOf(a) - ORDER.indexOf(b));
   return (
     <span className="mini-dots">
-      {entries.map(([s, n]) => (
-        <span key={s} title={`${n} ${statusLabel(s)}`}>
-          <span className="dot" style={{ background: COLORS[s] }}>
-            {GLYPHS[s] || ""}
+      {entries.map(([v, n]) => (
+        <span key={v} title={`${n} ${VLABEL[v] || v}`}>
+          <span className="dot" style={{ background: VCOL[v] }}>
+            {VGLYPH[v] || ""}
           </span>
           {n}
         </span>
@@ -105,22 +116,29 @@ export function ElementList() {
                           data-id={e.id}
                           role="option"
                           aria-selected={store.selected === e.id}
-                          aria-label={`${e.mark || "unmarked"} on sheet ${e.sheet || "unknown"}, ${statusLabel(e.status)}`}
+                          aria-label={`${e.mark || "unmarked"} on sheet ${e.sheet || "unknown"}, ${VLABEL[rowVerdict(e)] || statusLabel(e.status)}`}
                           onClick={() => select(e.id, "list")}
                         >
-                          <span className="dot" style={{ background: COLORS[e.status] }}>
-                            {GLYPHS[e.status] || ""}
+                          {/* Dot and pill carry the PRODUCT verdict so the
+                              list, the results table and the inspector all say
+                              the same thing about the same element. The
+                              internal engine status moves into the meta line,
+                              where the detail is still available but no longer
+                              competes with the answer. */}
+                          <span className="dot" style={{ background: VCOL[rowVerdict(e)] }}>
+                            {VGLYPH[rowVerdict(e)] || ""}
                           </span>
                           <span className="meta">
                             {e.sheet || "—"}
                             {e.distance_pdf_points != null ? ` · ${e.distance_pdf_points}pt` : ""}
+                            {` · ${statusLabel(e.status)}`}
                             {e.taught_by ? " · 🧠" : ""}
                           </span>
                           <span
                             className="pill"
-                            style={{ color: COLORS[e.status], borderColor: `${COLORS[e.status]}44` }}
+                            style={{ color: VCOL[rowVerdict(e)], borderColor: `${VCOL[rowVerdict(e)]}44` }}
                           >
-                            {e.status.replaceAll("_", " ")}
+                            {VLABEL[rowVerdict(e)] || statusLabel(e.status)}
                           </span>
                         </div>
                       ))}
