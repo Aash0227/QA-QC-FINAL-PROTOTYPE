@@ -1,4 +1,3 @@
-import { COL } from "../../../util";
 import { rowVerdict } from "../../../util.js";
 import { VerdictBadge } from "../verdict/VerdictBadge";
 import { store, select } from "../../../store";
@@ -7,7 +6,6 @@ import { visibleElements } from "./elements";
 import type { ElementRow } from "./types";
 import { useStoreVersion } from "./useStoreVersion";
 
-const COLORS = COL as Record<string, string>;
 
 /** React port of panels/table.js's renderTable() row-building. Mounted
  *  directly into the existing #results-tbody (a <tbody>, so this renders
@@ -19,12 +17,23 @@ const COLORS = COL as Record<string, string>;
 export function ResultsTable() {
   useStoreVersion("select", "refresh");
 
-  const { key, dir } = store.tableSort as { key: keyof ElementRow; dir: number };
+  const { key, dir } = store.tableSort as { key: keyof ElementRow | "verdict"; dir: number };
+  // The Verdict column has no top-level `verdict` key -- it lives at
+  // product.verdict -- so a naive a[key] lookup returned undefined for every
+  // row and the comparator scored every pair equal: the header rendered
+  // "sorted" while the order never changed. Sort verdicts by SEVERITY rather
+  // than alphabetically; a reviewer sorting by verdict wants the problems
+  // first, not "Match" before "Mismatch".
+  const VERDICT_RANK: Record<string, number> = {
+    LOCATION_MISMATCH: 0, NEEDS_REVIEW: 1, LOCATION_MATCH: 2, NOT_APPLICABLE: 3,
+  };
+  const sortValue = (row: ElementRow) =>
+    key === "verdict" ? VERDICT_RANK[rowVerdict(row)] ?? 99 : row[key as keyof ElementRow];
   const items = visibleElements()
     .slice()
     .sort((a, b) => {
-      const av = a[key];
-      const bv = b[key];
+      const av = sortValue(a);
+      const bv = sortValue(b);
       if (av == null && bv == null) return 0;
       if (av == null) return 1;
       if (bv == null) return -1;
@@ -62,10 +71,14 @@ export function ResultsTable() {
             <VerdictBadge verdict={rowVerdict(e)} size="sm" />
           </td>
           <td>
-            <span
-              className="status-pill"
-              style={{ color: COLORS[e.status], border: `1px solid ${COLORS[e.status]}66` }}
-            >
+            {/* Deliberately NEUTRAL, not colour-coded. The internal status
+                had its own palette (COL) in which LOCATION_MISMATCH is amber
+                -- the same amber VERDICT_COL uses for NEEDS_REVIEW -- so a
+                row could show a red "Mismatch" badge beside an amber pill,
+                and a NEEDS_REVIEW row showed amber beside violet. Two
+                palettes describing one element is worse than none. The
+                verdict carries the colour; this carries the detail. */}
+            <span className="status-pill status-pill--detail">
               {e.status.replaceAll("_", " ")}
             </span>
             {/* R-18: which flavour of REVIT_ONLY -- a vocabulary gap reads very

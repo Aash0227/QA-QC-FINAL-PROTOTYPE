@@ -54,6 +54,10 @@ export async function loadAll(first = false) {
        The header now speaks the same four words the results view does, instead
        of summing internal statuses here and risking a different total. */
     store.productCounts = el.product_counts || null;
+    // Reset the verdict filter on every load. It otherwise survived Extract or
+    // Match onto completely new data, silently hiding rows the reviewer had
+    // never filtered.
+    store.verdictFilter = null;
     const pc = store.productCounts;
     if (pc) {
       const inScope = (pc.LOCATION_MATCH || 0) + (pc.LOCATION_MISMATCH || 0) + (pc.NEEDS_REVIEW || 0);

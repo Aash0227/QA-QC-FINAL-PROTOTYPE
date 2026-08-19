@@ -534,3 +534,25 @@ header{background:rgba(22,24,29,.4) !important;border-bottom:1px solid rgba(255,
 @media (prefers-reduced-motion: reduce) {
   .verdict-bar__item { transition: none; }
 }
+
+/* Internal engine status shown beside a verdict badge: neutral by design.
+   It used the COL palette, in which LOCATION_MISMATCH is the same amber
+   VERDICT_COL uses for NEEDS_REVIEW -- so one element could carry two
+   different colours meaning two different things. The verdict owns the
+   colour; the status owns the detail. */
+.status-pill--detail {
+  color: var(--muted);
+  border: 1px solid rgba(255, 255, 255, .12);
+  background: rgba(255, 255, 255, .04);
+}
+
+/* Long reason strings (measured up to 198 chars) were on white-space:nowrap
+   and pushed the results panel to 1908px inside a 1600px viewport. The flex
+   child also lacked min-width:0, so it refused to shrink. */
+#table-wrap { overflow-x: auto; }
+#table-panel { min-width: 0; }
+#results-table td:last-child {
+  white-space: normal;
+  max-width: 46ch;
+  overflow-wrap: anywhere;
+}

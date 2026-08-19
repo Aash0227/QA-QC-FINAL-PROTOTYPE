@@ -35,7 +35,13 @@
     <div class="hzone">
       <button id="btn-pipe" title="Open the Pipeline" style="cursor:pointer" onclick="window.location.href='/pipeline.html'">⚡ Pipeline</button>
       <button id="btn-table" title="Show every element and its verdict">▤ All results</button>
-      <button id="btn-review" class="primary" title="Elements that need your judgement">⚠ Needs review (<span id="rev-count">0</span>)</button>
+      <!-- "Review queue", not "Needs review": this counts the human-review QUEUE
+           (/api/review/queue, which includes items a reviewer flagged), while the
+           verdict bar's "Needs review" counts elements the ENGINE could not settle
+           (product_counts). They are different numbers by design -- 25 vs 10 on the
+           current project -- and showing both under the same words in one viewport
+           taught the reviewer that one of them was wrong. -->
+      <button id="btn-review" class="primary" title="Your review queue — items flagged for a human decision. Distinct from the engine's Needs review count in the verdict bar.">⚠ Review queue (<span id="rev-count">0</span>)</button>
       <button id="btn-chat" title="Ask a question about this project">💬 Ask</button>
       <details id="adv-menu">
         <summary title="Advanced tools">⚙</summary>
@@ -65,6 +71,13 @@
           <select id="status-filter" style="flex:1"><option value="">All statuses</option></select>
           <select id="sheet-filter" style="flex:1"><option value="">All sheets</option></select>
         </div>
+        <!-- The verdict bar lives HERE, in the always-visible list panel, not
+             in #table-panel. It was mounted inside the results panel, which
+             starts hidden and can be closed: filtering to a verdict and then
+             closing the panel left the list filtered with the only clearing
+             control inside a display:none subtree. A filter must never
+             outlive the reach of its own control. -->
+        <div id="verdict-bar-root"></div>
         <div id="list-rows" role="listbox" aria-label="Elements — press J and K to step through"></div>
       </div>
     </div>

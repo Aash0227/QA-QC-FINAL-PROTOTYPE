@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 
 import { api } from "../../../api";
 import { select } from "../../../store";
-import { toast } from "../../../util";
+import { rowVerdict, toast } from "../../../util";
+import { VerdictBadge } from "../verdict/VerdictBadge";
 
 interface ReviewElement {
   id: string;
@@ -66,7 +67,11 @@ function QueueList({ queue, onOpen }: { queue: ReviewQueue; onOpen: (i: number) 
         return (
           <div className="row" style={{ cursor: "pointer" }} key={i} onClick={() => onOpen(i)}>
             <b>{e.mark || "?"}</b> {e.category.replace("_", " ")} · {e.sheet || "—"} ·{" "}
-            <span style={{ color: e.status === "LOCATION_MISMATCH" ? "var(--warn)" : "#94a3b8" }}>{e.status}</span>
+            {/* Was the one place in the app conveying a distinction by colour
+                ALONE -- amber vs grey with no glyph and no differing text
+                weight. It now shows the same verdict badge as every other
+                surface, which carries a glyph by construction. */}
+            <VerdictBadge verdict={rowVerdict(e)} size="sm" />
             {d}
             {it.disposition && <span className="badge"> ✓ {it.disposition}</span>}
             {it.comments.length > 0 && ` · 💬${it.comments.length}`}

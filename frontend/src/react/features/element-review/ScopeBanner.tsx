@@ -1,7 +1,6 @@
 import { useState } from "react";
 
-import { store, emit } from "../../../store";
-import { VerdictBar } from "../verdict/VerdictBadge";
+import { store } from "../../../store";
 
 import { useStoreVersion } from "./useStoreVersion";
 
@@ -22,29 +21,11 @@ export function ScopeBanner() {
   const [dismissed, setDismissed] = useState(false);
 
   const warns = (dismissed ? [] : (store.scopeWarnings as ScopeWarning[]) || []);
-  const counts = (store as Record<string, unknown>).productCounts as Record<string, number> | null;
 
-  // The verdict bar is the first thing a reviewer should see: how many
-  // elements the system could answer for, and how many it is handing back.
-  // Clicking a segment filters the list to that verdict.
-  const verdictBar = counts ? (
-    <div style={{ margin: "10px 10px 12px" }}>
-      <VerdictBar
-        counts={counts}
-        selected={(store as Record<string, unknown>).verdictFilter as string | null}
-        onSelect={(v) => {
-          (store as Record<string, unknown>).verdictFilter = v;
-          emit("refresh");
-        }}
-      />
-    </div>
-  ) : null;
-
-  if (!warns.length) return verdictBar;
+  if (!warns.length) return null;
 
   return (
     <>
-      {verdictBar}
     <div
       style={{
         margin: "8px 10px",
