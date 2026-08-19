@@ -166,3 +166,25 @@ def test_backfill_tolerates_an_empty_or_broken_artifact(monkeypatch):
     for stored in ({}, {"elements": []}, {"elements": None}):
         monkeypatch.setattr(el_router, "load_artifact", lambda key, s=stored: s)
         _json.loads(el_router.elements_get().body)   # must not raise
+
+
+def test_punch_list_carries_the_product_verdict(monkeypatch, tmp_path):
+    """A punch list handed to a contractor must say the same thing the
+    reviewer saw on screen, so it goes through the same backfill."""
+    import csv as _csv
+    from app import config
+    from app.routers import elements as el_router
+
+    monkeypatch.setattr(el_router, "load_artifact", lambda key: {
+        "elements": [{"id": "a", "sheet": "S-1", "category": "holdown",
+                      "mark": "H1", "status": "LOCATION_MISMATCH",
+                      "reason": "too far"}]})
+    monkeypatch.setattr(el_router.review, "load",
+                        lambda: {"comments": [], "dispositions": {}})
+    monkeypatch.setattr(config, "ARTIFACT_DIR", tmp_path, raising=False)
+    monkeypatch.setattr(el_router.config, "ARTIFACT_DIR", tmp_path, raising=False)
+    el_router.export_punch_list()
+    with (tmp_path / "punch_list.csv").open(encoding="utf-8", newline="") as fh:
+        rows = list(_csv.DictReader(fh))
+    assert rows[0]["verdict"] == "LOCATION_MISMATCH"
+    assert rows[0]["status"] == "LOCATION_MISMATCH"   # detail preserved

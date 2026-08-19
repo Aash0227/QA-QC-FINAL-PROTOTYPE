@@ -197,8 +197,12 @@ def _punch_rows(project):
 
 def test_punch_list_exports_feet_as_the_primary_distance(project) -> None:
     rows = _punch_rows(project)
-    assert list(rows[0])[:6] == [
-        "sheet", "category", "mark", "status", "distance_ft",
+    # `verdict` leads (the product answer a contractor acts on), `status`
+    # follows as the engine-internal detail. The contract this test exists to
+    # protect is unchanged: distance_ft comes BEFORE distance_pdf_points,
+    # because the status is decided in model feet.
+    assert list(rows[0])[:7] == [
+        "sheet", "category", "mark", "verdict", "status", "distance_ft",
         "distance_pdf_points"]
     by_id = {r["mark"]: r for r in rows}
     assert by_id["H1"]["distance_ft"] == "3.42"

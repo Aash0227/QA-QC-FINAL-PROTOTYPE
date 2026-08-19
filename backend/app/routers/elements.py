@@ -475,7 +475,10 @@ def export_punch_list() -> FileResponse:
     """Punch list of every actionable non-MATCH element."""
     import csv
 
-    element_list = load_artifact("element_list")
+    # Same backfill the UI and the agent use, so a punch list handed to a
+    # contractor carries the same verdicts the reviewer saw on screen.
+    element_list = matching_engine.ensure_product_blocks(
+        load_artifact("element_list")) or {}
     review_data = review.load()
     comments_by_el: dict[str, list[str]] = {}
     for c in review_data["comments"]:
@@ -488,8 +491,10 @@ def export_punch_list() -> FileResponse:
         # is the primary distance column. distance_pdf_points is the frozen
         # per-sheet pipeline's number and is kept for audit — blank on rows the
         # device pass owns rather than shown as if it explained the verdict.
+        # `verdict` leads: it is the product answer a contractor acts on.
+        # `status` follows as the engine-internal detail behind it.
         writer.writerow(
-            ["sheet", "category", "mark", "status", "distance_ft",
+            ["sheet", "category", "mark", "verdict", "status", "distance_ft",
              "distance_pdf_points", "pdf_x", "pdf_y", "revit_ref", "reason",
              "reviewer_disposition", "reviewer_comments"]
         )
@@ -500,7 +505,8 @@ def export_punch_list() -> FileResponse:
             ref = e.get("revit_ref") or {}
             disp = review_data["dispositions"].get(e["id"], {}).get("disposition", "")
             writer.writerow(
-                [e.get("sheet") or "", e["category"], e["mark"], e["status"],
+                [e.get("sheet") or "", e["category"], e["mark"],
+                 (e.get("product") or {}).get("verdict") or "", e["status"],
                  e.get("distance_ft") if e.get("distance_ft") is not None else "",
                  e.get("distance_pdf_points")
                  if e.get("distance_pdf_points") is not None else "",
