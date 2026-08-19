@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 
 import { api } from "../../../api";
 import { store, subscribe } from "../../../store";
-import { CAT_LABEL, COL } from "../../../util";
+import { CAT_LABEL, COL, rowVerdict } from "../../../util";
+import { VerdictBadge } from "../verdict/VerdictBadge";
 
 const LABELS = CAT_LABEL as Record<string, string>;
 const COLORS = COL as Record<string, string>;
@@ -148,9 +149,15 @@ export function Inspector() {
 
   return (
     <>
-      <h3 style={{ margin: 0 }}>
+      <h3 style={{ margin: 0, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         {el.mark ?? ""}{" "}
-        <span className="status-pill" style={{ background: `${COLORS[el.status]}22`, color: COLORS[el.status] }}>
+        {/* The inspector is where a reviewer decides. It leads with the same
+            verdict the list and the table show, then keeps the internal
+            engine status beside it as supporting detail -- the evidence
+            behind the answer is never hidden, it is just no longer first. */}
+        <VerdictBadge verdict={rowVerdict(el)} />
+        <span className="status-pill"
+              style={{ background: `${COLORS[el.status]}22`, color: COLORS[el.status] }}>
           {el.status.replaceAll("_", " ")}
         </span>
       </h3>
