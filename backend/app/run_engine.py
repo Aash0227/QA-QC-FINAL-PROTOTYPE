@@ -47,10 +47,38 @@ def _read_state() -> dict[str, Any] | None:
 
 
 def _write_state(state: dict[str, Any]) -> None:
+    """Atomically persist the run state.
+
+    On Windows, os.replace fails with PermissionError (WinError 5) if another
+    handle has the destination open — and the UI polls GET /api/pipeline/run
+    every few hundred milliseconds while the runner thread writes after every
+    stage transition, so the two collide regularly. Unhandled, the exception
+    propagated out of the runner and the whole run was marked failed because a
+    *status write* lost a race, which is how a healthy run could report
+    failure. Retry briefly, then give up quietly: the next transition writes
+    again, and losing one intermediate status update is not worth failing a
+    run over."""
     p = _run_state_path()
     tmp = p.with_suffix(".tmp")
     tmp.write_text(json.dumps(state, indent=2), encoding="utf-8")
-    tmp.replace(p)
+    for attempt in range(8):
+        try:
+            tmp.replace(p)
+            return
+        except PermissionError:
+            if attempt < 7:
+                time.sleep(0.02 * (attempt + 1))
+                continue
+            # Out of retries. Swallowing is only safe when a previous state is
+            # already on disk -- readers then see slightly stale status instead
+            # of nothing. If this is the FIRST write there is no fallback: the
+            # run would appear never to have started (GET returns 404), so the
+            # failure must surface rather than be hidden.
+            if not p.exists():
+                raise
+            logging.getLogger(__name__).debug(
+                "run_state update lost the write race; keeping previous state")
+            return
 
 
 def run_state() -> dict[str, Any] | None:

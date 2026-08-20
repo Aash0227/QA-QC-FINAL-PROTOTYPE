@@ -59,7 +59,11 @@ export function RunsComparison() {
   };
 
   useEffect(() => {
-    load();
+    // Load only when the Runs drawer is actually opened, not on mount. This
+    // panel is closed on every normal dashboard load, and "no baseline saved
+    // yet" is a legitimate 404 — fetching it eagerly turned an expected state
+    // into a console error on every single page load, which is exactly the
+    // kind of noise that hides a real error later.
     window.addEventListener("runs-init", load);
     return () => window.removeEventListener("runs-init", load);
     // eslint-disable-next-line react-hooks/exhaustive-deps
