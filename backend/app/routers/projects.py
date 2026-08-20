@@ -92,6 +92,23 @@ def _summary(d: Path, active: str | None) -> dict[str, Any]:
     # uploaded_at predates created_at/updated_at; it is the only timestamp older
     # workspaces have, so it seeds both rather than showing nothing.
     uploaded = manifest.get("uploaded_at")
+    has_pdf = bool(pdf_path) and Path(pdf_path).is_file()
+    has_revit = bool(revit_path) and Path(revit_path).is_file()
+    has_results = bool(element_list.get("elements"))
+
+    # Readiness is computed HERE, once, so every surface agrees on whether a
+    # project can actually produce an answer. Previously each layer inferred
+    # it from missing artifacts and reached a different conclusion: the card
+    # said "no Revit export", the pipeline said "completed", the AI agent said
+    # "run the pipeline first" -- three truthful components giving a user
+    # three different stories about one project.
+    if has_results:
+        readiness, missing = "ready", []
+    else:
+        missing = [k for k, present in (("pdf", has_pdf), ("revit", has_revit))
+                   if not present]
+        readiness = "runnable" if not missing else "incomplete"
+
     return {
         "slug": d.name,
         # Fallback chain unchanged from before the Project Manager, with the
@@ -104,8 +121,13 @@ def _summary(d: Path, active: str | None) -> dict[str, Any]:
         "notes": manifest.get("notes"),
         "created_at": manifest.get("created_at") or uploaded,
         "updated_at": manifest.get("updated_at") or uploaded,
-        "has_pdf": bool(pdf_path) and Path(pdf_path).is_file(),
-        "has_revit": bool(revit_path) and Path(revit_path).is_file(),
+        "has_pdf": has_pdf,
+        "has_revit": has_revit,
+        # ready      — results exist, open it and review
+        # runnable   — both inputs present, the pipeline can be run
+        # incomplete — `missing_inputs` names exactly what to supply
+        "readiness": readiness,
+        "missing_inputs": missing,
         "page_count": manifest.get("page_count"),
         "sheet_count": len(element_list.get("sheets") or []) or None,
         "counts": element_list.get("counts"),

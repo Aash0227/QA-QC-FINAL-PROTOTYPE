@@ -45,14 +45,30 @@ function Facts({ p }: { p: ProjectSummary }) {
   if (p.counts?.total) bits.push(`${p.counts.total} elements`);
   bits.push(p.has_pdf ? "PDF ✓" : "no PDF");
   bits.push(p.has_revit ? "Revit ✓" : "no Revit export");
+  // Say plainly whether this project can produce an answer. A card that lists
+  // "no Revit export" as one fact among several leaves the user to work out
+  // that the project is unusable; three of six projects were in exactly that
+  // state, all badged ACTIVE.
+  const missing = p.missing_inputs || [];
+  const LABEL: Record<string, string> = { pdf: "a PDF drawing set", revit: "a Revit export" };
   return (
-    <div className="pm-facts">
-      {bits.map((b, i) => (
-        <span className="pm-fact" key={i}>
-          {b}
-        </span>
-      ))}
-    </div>
+    <>
+      <div className="pm-facts">
+        {bits.map((b, i) => (
+          <span className="pm-fact" key={i}>
+            {b}
+          </span>
+        ))}
+      </div>
+      {p.readiness === "incomplete" && missing.length > 0 && (
+        <div className="pm-blocked" role="note">
+          Needs {missing.map((m) => LABEL[m] || m).join(" and ")} before the pipeline can run.
+        </div>
+      )}
+      {p.readiness === "runnable" && (
+        <div className="pm-runnable" role="note">Ready to run the pipeline.</div>
+      )}
+    </>
   );
 }
 
