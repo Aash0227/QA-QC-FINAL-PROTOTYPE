@@ -8,6 +8,15 @@ artifact-derived summary at the end.
 
 Ring buffer, no persistence: progress is a live view, artifacts remain the
 audit trail.
+
+Every event carries the PROJECT it belongs to, and ``sse_stream`` refuses to
+deliver another project's events. Without that, one global buffer replayed
+from seq 0 to every listener: opening the pipeline on a project whose stages
+had all skipped showed the *previous* project's "complete" events painted onto
+them, because the UI applies events by stage key. A QA tool reporting another
+project's success on your screen is the worst class of bug this system can
+have, so the project stamp is applied at emit time -- where the truth is
+known -- rather than being inferred later.
 """
 
 from __future__ import annotations
@@ -28,12 +37,21 @@ def emit(step: str, kind: str, message: str, data: dict[str, Any] | None = None)
     """kind: start | info | done | error. Never raises."""
     global _SEQ
     try:
+        # Resolve the project HERE, on the emitting thread, where the request
+        # or run context is still bound. Doing it at read time would attribute
+        # every event to whichever project happened to be active then.
+        try:
+            from . import config
+            project = config.active_project()
+        except Exception:
+            project = None
         with _LOCK:
             _SEQ += 1
             _EVENTS.append(
                 {
                     "seq": _SEQ,
                     "ts": time.time(),
+                    "project": project,
                     "step": step,
                     "kind": kind,
                     "message": message,
@@ -46,21 +64,44 @@ def emit(step: str, kind: str, message: str, data: dict[str, Any] | None = None)
         pass  # progress must never break the pipeline
 
 
-def events_since(seq: int) -> list[dict[str, Any]]:
+def events_since(seq: int, project: str | None = None) -> list[dict[str, Any]]:
+    """Events after ``seq``. When ``project`` is given, ONLY that project's
+    events -- an event with no project stamp is never delivered to a filtered
+    listener, because an unattributed event cannot be shown to be yours."""
     with _LOCK:
-        return [e for e in _EVENTS if e["seq"] > seq]
+        fresh = [e for e in _EVENTS if e["seq"] > seq]
+    if project is None:
+        return fresh
+    return [e for e in fresh if e.get("project") == project]
 
 
-async def sse_stream(poll_s: float = 0.25):
-    """Async generator for StreamingResponse (text/event-stream)."""
-    last = 0
-    # Send a hello so the client knows the stream is live.
+def current_seq() -> int:
+    """Newest sequence number, for a listener that wants only what happens
+    from NOW on rather than a replay of history."""
+    with _LOCK:
+        return _SEQ
+
+
+async def sse_stream(poll_s: float = 0.25, project: str | None = None,
+                     since: int | None = None):
+    """Async generator for StreamingResponse (text/event-stream).
+
+    ``project`` scopes the stream. ``since`` defaults to the CURRENT sequence,
+    so a fresh listener receives live events rather than a replay of the whole
+    buffer -- replaying from 0 is what let a previous run's "complete" events
+    repaint a project whose stages had actually skipped."""
+    last = current_seq() if since is None else since
+    # Hello so the client knows the stream is live.
     yield "event: hello\ndata: {}\n\n"
     while True:
-        fresh = events_since(last)
+        fresh = events_since(last, project)
         for e in fresh:
-            last = e["seq"]
+            last = max(last, e["seq"])
             yield f"id: {e['seq']}\ndata: {json.dumps(e)}\n\n"
+        if not fresh:
+            # Keep `last` moving even when everything was filtered out, or a
+            # scoped listener re-scans the whole buffer forever.
+            last = max(last, current_seq())
         await asyncio.sleep(poll_s)
 
 

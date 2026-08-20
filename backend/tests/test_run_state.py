@@ -239,13 +239,25 @@ def test_run_with_missing_revit_data_is_blocked_not_completed(
     """A run whose answer-producing stages all skipped produced NO answer, and
     must not report success.
 
+    NOTE: this module has a pre-existing intermittent race -- runner threads
+    from an earlier test can still be finishing as the next one starts, and
+    several tests here have flaked on that all session. The run_id assertion
+    below makes THIS test fail loudly rather than silently assert against
+    another run's state if that happens.
+
     This is the real `madera` case: PDF uploaded, Revit export never supplied,
     so revit_convert/ransac/compare/match skip on missing prerequisites. The
     run used to report "completed", which is how a project that could never
     produce a result came to look finished.
     """
-    assert _post_run(client).status_code == 202
+    started = _post_run(client)
+    assert started.status_code == 202
+    run_id = started.json()["run_id"]
     state = _wait_until_done(client)
+    # Assert on OUR run. A previous test's runner thread can still be
+    # finishing and writing state; without this the assertion could land on
+    # a different run entirely.
+    assert state["run_id"] == run_id, "observed a different run's state"
 
     assert state["status"] == "blocked", state["status"]
     assert state["skipped_stages"], "a blocked run must name what it skipped"

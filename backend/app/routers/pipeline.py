@@ -716,11 +716,23 @@ def teach_unrecognized() -> JSONResponse:
 # ---------------------------------------------------------------------------
 @router.get("/api/pipeline/events")
 async def pipeline_events():
-    """Live progress stream (SSE) for the pipeline view."""
+    """Live progress stream (SSE) for the pipeline view, scoped to THIS
+    project.
+
+    The stream is bound to the project resolved for this request, so a
+    listener can only ever receive its own project's events. Previously one
+    global buffer was replayed from seq 0 to every listener, and because the
+    UI applies events by stage key, a project whose stages had skipped would
+    render another project's "complete" events as its own."""
     from fastapi.responses import StreamingResponse
 
+    try:
+        project = config.active_project()
+    except Exception:
+        project = None
+
     return StreamingResponse(
-        progress.sse_stream(),
+        progress.sse_stream(project=project),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
