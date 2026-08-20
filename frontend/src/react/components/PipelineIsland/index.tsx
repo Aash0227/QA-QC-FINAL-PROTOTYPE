@@ -1,4 +1,4 @@
-import { tokenized } from "../../lib/api";
+import { projectScoped, tokenized } from "../../lib/api";
 import { toast } from "../../../util";
 import { useState } from "react";
 import { ChevronDown, ChevronRight, BrainCircuit, Loader2, Bug } from "lucide-react";
@@ -69,7 +69,12 @@ export default function PipelineIsland() {
                 // explanation. Fetch lets us keep them here and say what is
                 // actually missing.
                 try {
-                  const res = await fetch(tokenized("/api/export/punch-list.csv"));
+                  // projectScoped, not a bare fetch: a raw fetch carries
+                  // neither the X-Project header nor ?project=, so the export
+                  // resolved to the server's globally-active project rather
+                  // than the one THIS tab is pinned to — a tab could hand the
+                  // user a different project's punch list.
+                  const res = await fetch(tokenized(projectScoped("/api/export/punch-list.csv")));
                   if (!res.ok) {
                     const detail = await res.json().catch(() => null);
                     toast(
@@ -114,7 +119,20 @@ export default function PipelineIsland() {
                     <BrainCircuit className="w-4 h-4 text-primary" />
                   )}
                   <span className="text-[15px] font-semibold text-foreground/90 tracking-tight">
-                    {status === "running" ? "Pipeline running…" : status === "completed" ? "Pipeline complete" : "Pipeline"}
+                    {/* "blocked" is a real terminal state: nothing broke, but
+                        the run produced no results because inputs were
+                        missing. It used to be reported as "complete", which is
+                        how a project that could never produce an answer came to
+                        look finished. */}
+                    {status === "running"
+                      ? "Pipeline running…"
+                      : status === "completed"
+                        ? "Pipeline complete"
+                        : status === "blocked"
+                          ? "Pipeline blocked — missing inputs"
+                          : status === "failed"
+                            ? "Pipeline failed"
+                            : "Pipeline"}
                   </span>
                 </div>
                 <div className="flex items-center gap-3">

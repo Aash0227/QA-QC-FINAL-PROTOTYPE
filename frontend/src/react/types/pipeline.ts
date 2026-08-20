@@ -14,7 +14,14 @@ export interface RunStage {
   error: string | null;
 }
 
-export type RunStatus = "running" | "completed" | "failed";
+/** Terminal run states from run_engine.
+ *  completed — the run produced its final artifact
+ *  blocked   — nothing broke, but required inputs were missing so no result
+ *              was produced (e.g. a project with no Revit export)
+ *  failed    — a stage broke
+ *  "blocked" is deliberately distinct: it used to be reported as "completed",
+ *  which is how a project that could never produce an answer looked finished. */
+export type RunStatus = "running" | "completed" | "blocked" | "failed";
 
 export interface NextAction {
   kind: string; // "upload_pdf" | "upload_revit" | "review" | "retry" | ...

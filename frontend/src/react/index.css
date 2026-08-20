@@ -34,10 +34,14 @@
      pipeline page focused things in a colour it used nowhere else. */
   --color-ring: #22D3EE;
 
-  --radius-sm: 0.25rem;
-  --radius-md: 0.5rem;
-  --radius-lg: 0.75rem;
-  --radius-xl: 1rem;
+  /* Radius ramp aligned to the dashboard (components.css): buttons 10px,
+     small controls 8px. The two pages previously sat at 10px and 8px for the
+     same control, which is a large part of why they read as two products
+     rather than two views of one. */
+  --radius-sm: 0.5rem;    /* 8px  — .mini buttons, chips */
+  --radius-md: 0.625rem;  /* 10px — default button/input, matches the dashboard */
+  --radius-lg: 0.875rem;  /* 14px — cards */
+  --radius-xl: 1rem;      /* 16px — panels */
 
   --font-sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;

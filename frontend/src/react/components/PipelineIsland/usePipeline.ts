@@ -21,7 +21,11 @@ export interface PipelineIslandState {
   project: string | null;
   runId: string | null;
   connected: boolean;
-  status: "loading" | "upload" | "running" | "completed" | "error";
+  /* blocked/failed mirror the backend run states: blocked means the run
+     produced nothing because inputs were missing, failed means a stage
+     broke. Collapsing either into "error" or "completed" is what let an
+     empty run report success. */
+  status: "loading" | "upload" | "running" | "completed" | "blocked" | "failed" | "error";
   debugRawEvents: PipelineEvent[];
   /** Action set */
   startRun: (force?: boolean) => Promise<void>;
@@ -144,9 +148,16 @@ export function usePipeline(): PipelineIslandState {
     project: run?.project ?? null,
     runId: run?.run_id ?? null,
     connected,
+    // "blocked" is passed through rather than collapsed into "error": nothing
+    // broke, the run simply had no inputs to work from. Mapping it to "error"
+    // would blame the pipeline for a project that was never given a Revit
+    // export, and mapping it to "completed" is what made an empty run look
+    // finished in the first place.
     status: run ? (
       run.status === "running" ? "running"
       : run.status === "completed" ? "completed"
+      : run.status === "blocked" ? "blocked"
+      : run.status === "failed" ? "failed"
       : "error"
     ) : "loading",
     debugRawEvents,
