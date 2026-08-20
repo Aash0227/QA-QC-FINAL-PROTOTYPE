@@ -12,6 +12,13 @@ export const store = {
   productCounts: null,
   /* Verdict filter chosen from the verdict bar (null = show everything). */
   verdictFilter: null,
+  /* Set when /api/elements fails: "no-results" (409/404 — pipeline has not
+     produced results yet) or "fetch-failed" (a real fault). Drives the
+     dashboard empty state that replaced the old silent redirect. */
+  loadError: null,
+  /* run_state.next_action from the backend — the concrete remedy for this
+     project (e.g. upload the Revit export). */
+  nextAction: null,
   activeSheet: null, selected: null,
   filters: { search: "", status: "", sheet: "" },
   layers: new Set(DEFAULT_LAYERS),

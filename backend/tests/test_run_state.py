@@ -33,8 +33,48 @@ def workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 @pytest.fixture()
 def quiet_stages(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Stages succeed instantly with no artifacts written."""
-    monkeypatch.setattr(run_engine, "_exec_stage", lambda key: None)
+    """Stages succeed instantly, writing their declared output artifact.
+
+    They must actually write it: a stage that returns without producing its
+    declared output is now a FAILURE, not a success (run_engine asserts the
+    artifact exists before marking a stage done). A no-op fixture would be
+    simulating a stage that lies about succeeding, which is precisely the bug
+    that assertion exists to catch."""
+    from app import stage_graph
+
+    # raw_revit is an UPLOADED input, not any stage's output, so it must be
+    # seeded or every Revit-dependent stage skips and the run is blocked.
+    seed = config.artifact_path("raw_revit")
+    seed.parent.mkdir(parents=True, exist_ok=True)
+    seed.write_text("{}", encoding="utf-8")
+
+    def _fake(key: str) -> None:
+        out = stage_graph.STAGE_OUTPUT.get(key)
+        if out:
+            path = config.artifact_path(out)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(run_engine, "_exec_stage", _fake)
+
+
+@pytest.fixture()
+def blocked_stages(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stages succeed EXCEPT anything needing Revit data, which never arrives.
+
+    Reproduces the real `madera` shape: the PDF side runs, every
+    Revit-dependent stage skips for a missing prerequisite, and no
+    element_list is ever produced."""
+    from app import stage_graph
+
+    def _fake(key: str) -> None:
+        out = stage_graph.STAGE_OUTPUT.get(key)
+        if out and out not in ("ai_revit",):
+            path = config.artifact_path(out)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(run_engine, "_exec_stage", _fake)
 
 
 @pytest.fixture(autouse=True)
@@ -160,13 +200,18 @@ def test_stale_running_state_recovers(workspace, quiet_stages, client):
 
 
 def test_run_completes_every_stage_done_or_skipped(workspace, quiet_stages, client):
-    """(f) With no-op stages the run completes; every stage is done or skipped
-    and next_action is present."""
+    """(f) With no-op stages the run reaches a terminal state; every stage is
+    done or skipped and next_action is present.
+
+    These stages genuinely write their declared artifacts, so the run reaches
+    "completed" -- which now means the run actually produced its final
+    artifact, not merely that the thread finished.
+    """
     resp = _post_run(client)
     assert resp.status_code == 202
 
     state = _wait_until_done(client)
-    assert state["status"] == "completed"
+    assert state["status"] == "completed", state["status"]
     assert state["completed_at"]
     for s in state["stages"]:
         assert s["status"] in ("done", "skipped"), (
@@ -176,10 +221,35 @@ def test_run_completes_every_stage_done_or_skipped(workspace, quiet_stages, clie
 
 
 def test_get_after_completion_persists(workspace, quiet_stages, client):
-    """After completion, GET still serves the finished state (persistence)."""
+    """After the run ends, GET still serves the finished state (persistence).
+
+    This test is about PERSISTENCE, not about which terminal status was
+    reached -- with no-op stages that is "blocked" (nothing was produced).
+    Asserting the terminal status is the job of the test above."""
     _post_run(client)
     state = _wait_until_done(client)
     resp = client.get("/api/pipeline/run")
     assert resp.status_code == 200
-    assert resp.json()["status"] == "completed"
+    assert resp.json()["status"] == state["status"] != "running"
     assert resp.json()["run_id"] == state["run_id"]
+
+def test_run_with_missing_revit_data_is_blocked_not_completed(
+    workspace, blocked_stages, client
+) -> None:
+    """A run whose answer-producing stages all skipped produced NO answer, and
+    must not report success.
+
+    This is the real `madera` case: PDF uploaded, Revit export never supplied,
+    so revit_convert/ransac/compare/match skip on missing prerequisites. The
+    run used to report "completed", which is how a project that could never
+    produce a result came to look finished.
+    """
+    assert _post_run(client).status_code == 202
+    state = _wait_until_done(client)
+
+    assert state["status"] == "blocked", state["status"]
+    assert state["skipped_stages"], "a blocked run must name what it skipped"
+    # It must point at the real remedy, not at a broken stage.
+    assert state["next_action"]["kind"] == "upload_revit"
+    # And nothing may be reported as failed -- nothing broke; input was absent.
+    assert not [s for s in state["stages"] if s["status"] == "failed"]

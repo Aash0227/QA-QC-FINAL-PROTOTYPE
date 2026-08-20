@@ -61,9 +61,12 @@ interface CardViewProps {
   onOpen: () => void;
   onEdit: () => void;
   onDelete: () => void;
+  /** Re-fetch the list after an input is attached, so the card's
+   *  "no Revit export" fact and the Open affordance update immediately. */
+  onChanged: () => void;
 }
 
-function CardView({ p, onOpen, onEdit, onDelete }: CardViewProps) {
+function CardView({ p, onOpen, onEdit, onDelete, onChanged }: CardViewProps) {
   const sub = [p.client, p.revision].filter(Boolean).join(" · ");
   return (
     <>
@@ -89,6 +92,8 @@ function CardView({ p, onOpen, onEdit, onDelete }: CardViewProps) {
         <button className="mini" data-act="edit" onClick={onEdit}>
           Edit
         </button>
+        {!p.has_pdf && <AttachInput slug={p.slug} kind="pdf" onDone={onChanged} />}
+        {!p.has_revit && <AttachInput slug={p.slug} kind="revit_json" onDone={onChanged} />}
         <span style={{ flex: 1 }} />
         <button className="mini pm-danger" data-act="delete" onClick={onDelete}>
           Delete
@@ -259,6 +264,63 @@ function DeleteConfirm({
   );
 }
 
+/** Attach a missing input to an EXISTING project.
+ *
+ *  A project whose PDF is uploaded but whose Revit export is not can never
+ *  produce a result: revit_convert, ransac, compare and match all skip, and
+ *  the run still reports "completed". Before this, the only way out was to
+ *  delete the project and recreate it, because nothing in the product could
+ *  supply the missing file. POST /api/upload has always accepted both. */
+function AttachInput({ slug, kind, onDone }: {
+  slug: string;
+  kind: "pdf" | "revit_json";
+  onDone: () => void;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const label = kind === "pdf" ? "Add PDF" : "Add Revit export";
+
+  const pick = async (ev: React.ChangeEvent<HTMLInputElement>) => {
+    const f = ev.target.files?.[0];
+    if (!f) return;
+    setBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append(kind, f);
+      await api(`/api/upload?project=${encodeURIComponent(slug)}`, { method: "POST", body: fd });
+      toast(`Uploaded ${f.name} to ${slug}.`);
+      onDone();
+    } catch (e) {
+      toast(`Could not upload ${f.name}: ` + (e as Error).message, true);
+    } finally {
+      setBusy(false);
+      if (ref.current) ref.current.value = "";
+    }
+  };
+
+  return (
+    <>
+      <button
+        type="button"
+        className="mini"
+        data-act={kind === "pdf" ? "attach-pdf" : "attach-revit"}
+        disabled={busy}
+        onClick={() => ref.current?.click()}
+      >
+        {busy ? "Uploading…" : label}
+      </button>
+      <input
+        ref={ref}
+        type="file"
+        accept={kind === "pdf" ? ".pdf" : ".json,application/json"}
+        style={{ display: "none" }}
+        onChange={pick}
+      />
+    </>
+  );
+}
+
+
 function NewProjectForm({ onDone }: { onDone: () => void }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
@@ -271,6 +333,7 @@ function NewProjectForm({ onDone }: { onDone: () => void }) {
     const client = (form.elements.namedItem("client") as HTMLInputElement).value.trim() || null;
     const revision = (form.elements.namedItem("revision") as HTMLInputElement).value.trim() || null;
     const file = (form.elements.namedItem("pdf") as HTMLInputElement).files?.[0];
+    const revitFile = (form.elements.namedItem("revit_json") as HTMLInputElement).files?.[0];
     setBusy(true);
     try {
       setMsg("Creating workspace…");
@@ -279,13 +342,22 @@ function NewProjectForm({ onDone }: { onDone: () => void }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, client, revision }),
       });
-      if (file) {
-        setMsg(`Uploading ${file.name}…`);
+      // Both inputs go up in ONE request. POST /api/upload has always
+      // accepted `revit_json` alongside `pdf`; the UI simply never sent it,
+      // which is why a project could be created that could never produce a
+      // result -- the pipeline needs the Revit export and nothing in the
+      // product could supply it.
+      if (file || revitFile) {
+        const names = [file?.name, revitFile?.name].filter(Boolean).join(" + ");
+        setMsg(`Uploading ${names}…`);
         const fd = new FormData();
-        fd.append("pdf", file);
+        if (file) fd.append("pdf", file);
+        if (revitFile) fd.append("revit_json", revitFile);
         await api(`/api/upload?project=${encodeURIComponent(created.slug)}`, { method: "POST", body: fd });
+        toast(`Created ${created.slug} and uploaded ${names}.`);
+      } else {
+        toast(`Created ${created.slug}.`);
       }
-      toast(file ? `Created ${created.slug} and uploaded ${file.name}.` : `Created ${created.slug}.`);
       onDone();
     } catch (e) {
       setBusy(false);
@@ -319,6 +391,14 @@ function NewProjectForm({ onDone }: { onDone: () => void }) {
         Drawing set (PDF)
         <input name="pdf" type="file" accept=".pdf" className="pm-file" />
       </label>
+      <label>
+        Revit export (JSON)
+        <input name="revit_json" type="file" accept=".json,application/json" className="pm-file" />
+      </label>
+      <p className="pm-muted pm-hint">
+        Both are needed before the pipeline can compare drawings to the model. Either can be
+        added later from the project card.
+      </p>
       <div className="pm-actions">
         <button type="submit" className="primary mini" disabled={busy}>
           Create project
@@ -558,6 +638,7 @@ export function ProjectManager() {
                     onOpen={() => openProject(p.slug)}
                     onEdit={() => setEditingSlug(p.slug)}
                     onDelete={() => requestDelete(p.slug)}
+                    onChanged={refresh}
                   />
                 )}
               </article>

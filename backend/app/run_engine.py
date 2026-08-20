@@ -165,9 +165,29 @@ def _run_in_thread(slug: str, run_id: str, lock: threading.Lock, force: bool) ->
             try:
                 _exec_stage(key)
                 dur = round(time.monotonic() - start, 1)
-                si["status"] = "done"
-                si["duration_s"] = dur
-                progress.emit(key, "done", f"{title} complete ({dur}s)")
+                # A stage is only "done" if it actually produced its declared
+                # output. Several handlers return HTTP 200 while reporting
+                # failure in the body -- ransac_holdown returns ok:false when
+                # the solve fails and routers/registration.py passes that
+                # through as 200 -- so a stage could be marked done having
+                # saved no calibration. The next stage then skips "waiting on:
+                # registration", pointing the user at the wrong stage. Checking
+                # the artifact closes every such path at once, whatever the
+                # handler chose to return.
+                if not stage_graph.artifact_present((output_artifact,)):
+                    si["status"] = "failed"
+                    si["duration_s"] = dur
+                    si["error"] = (
+                        f"{title} reported success but produced no "
+                        f"{output_artifact!r}. Its inputs were present, so this "
+                        "is a failure inside the stage, not a missing "
+                        "prerequisite.")
+                    progress.emit(key, "error", f"{title} failed — no {output_artifact} written")
+                    stage_graph.invalidate_downstream(key)
+                else:
+                    si["status"] = "done"
+                    si["duration_s"] = dur
+                    progress.emit(key, "done", f"{title} complete ({dur}s)")
             except Exception as exc:  # noqa: BLE001
                 from fastapi import HTTPException
                 dur = round(time.monotonic() - start, 1)
@@ -190,7 +210,27 @@ def _run_in_thread(slug: str, run_id: str, lock: threading.Lock, force: bool) ->
         # Post-run: set completion + next_action
         state = _read_state()
         if state and state.get("status") == "running":
-            state["status"] = "completed"
+            # "completed" used to mean only "the thread finished". A run whose
+            # answer-producing stages all SKIPPED for missing inputs reported
+            # success, so a project that could never produce a result looked
+            # finished. Distinguish the three real outcomes:
+            #   failed    - a stage broke
+            #   blocked   - nothing broke, but the run produced no element_list
+            #               because inputs were missing (the honest state for a
+            #               project with no Revit export)
+            #   completed - the run produced its final artifact
+            stages = state.get("stages") or []
+            any_failed = any(st.get("status") == "failed" for st in stages)
+            produced = stage_graph.artifact_present(("element_list",))
+            if any_failed:
+                state["status"] = "failed"
+            elif produced:
+                state["status"] = "completed"
+            else:
+                state["status"] = "blocked"
+            state["skipped_stages"] = [
+                st.get("key") for st in stages if st.get("status") == "skipped"
+            ]
             state["completed_at"] = _now_iso()
             if stage_graph.artifact_present(("element_list",)):
                 state["next_action"] = {"kind": "review", "message": "QA/QC complete — review the results."}

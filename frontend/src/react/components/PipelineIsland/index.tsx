@@ -1,4 +1,5 @@
 import { tokenized } from "../../lib/api";
+import { toast } from "../../../util";
 import { useState } from "react";
 import { ChevronDown, ChevronRight, BrainCircuit, Loader2, Bug } from "lucide-react";
 
@@ -61,8 +62,35 @@ export default function PipelineIsland() {
             <Button
               size="sm"
               variant="outline"
-              onClick={() => {
-                window.location.href = tokenized("/api/export/punch-list.csv");
+              onClick={async () => {
+                // Fetch rather than navigate. window.location.href sent the
+                // browser to the raw endpoint, so on a project with no results
+                // the user got a 409 JSON blob rendered as a page instead of an
+                // explanation. Fetch lets us keep them here and say what is
+                // actually missing.
+                try {
+                  const res = await fetch(tokenized("/api/export/punch-list.csv"));
+                  if (!res.ok) {
+                    const detail = await res.json().catch(() => null);
+                    toast(
+                      res.status === 409 || res.status === 404
+                        ? "No results to export yet — run the pipeline first."
+                        : "Could not export the punch list: " +
+                            ((detail && detail.detail) || res.statusText),
+                      true,
+                    );
+                    return;
+                  }
+                  const blob = await res.blob();
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = "punch_list.csv";
+                  a.click();
+                  URL.revokeObjectURL(url);
+                } catch (e) {
+                  toast("Could not export the punch list: " + (e as Error).message, true);
+                }
               }}
             >
               Report

@@ -72,6 +72,43 @@ export function ElementList() {
 
   const groups = CAT_LIST.filter((cat) => byCat[cat]);
 
+  // No results at all for this project: say why, and offer the actual next
+  // step. This replaces a silent redirect to /pipeline.html, which made a
+  // project awaiting input indistinguishable from a broken backend.
+  const loadError = (store as Record<string, unknown>).loadError as string | null;
+  if (loadError && !(store.elements as unknown[]).length) {
+    const nextAction = (store as Record<string, unknown>).nextAction as
+      | { kind?: string; message?: string }
+      | null;
+    return (
+      <div className="empty-state empty-state--block">
+        {loadError === "no-results" ? (
+          <>
+            <strong>No results for this project yet.</strong>
+            <p>{nextAction?.message || "Run the pipeline to compare the drawings against the model."}</p>
+            <button className="mini primary" onClick={() => { window.location.href = "/pipeline.html"; }}>
+              Open pipeline
+            </button>
+            {nextAction?.kind === "upload_revit" && (
+              <button
+                className="mini"
+                onClick={() => window.dispatchEvent(new CustomEvent("open-project-manager"))}
+              >
+                Add Revit export
+              </button>
+            )}
+          </>
+        ) : (
+          <>
+            <strong>Could not load results.</strong>
+            <p>The backend did not answer. Check that it is running, then retry.</p>
+            <button className="mini" onClick={() => window.location.reload()}>Retry</button>
+          </>
+        )}
+      </div>
+    );
+  }
+
   if (!groups.length) {
     // An empty list must always say WHY it is empty and offer the way out.
     // The verdict filter is set from a different pane (the verdict bar above

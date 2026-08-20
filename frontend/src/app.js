@@ -5,7 +5,7 @@
 
 import "./fonts.js";
 import { $, toast } from "./util.js";
-import { store } from "./store.js";
+import { store, emit } from "./store.js";
 import { api, tokenized } from "./api.js";
 import { onAny } from "./sse.js";
 import { renderList, renderFilters } from "./panels/list.js";
@@ -76,9 +76,30 @@ export async function loadAll(first = false) {
     }
   } catch (e) {
     ok = false;
-    $("#hdr-stats").textContent = "no data yet — open ⚡ Pipeline";
+    /* Say what is actually wrong. A 409 means the pipeline has not produced
+       results for this project yet; anything else is a real fault. Previously
+       both were treated identically and the user was redirected away before
+       they could read either. */
+    const notRunYet = e && (e.status === 409 || e.status === 404);
+    $("#hdr-stats").textContent = notRunYet
+      ? "no results yet for this project"
+      : "could not load results — " + ((e && e.message) || "backend unreachable");
+    store.loadError = notRunYet ? "no-results" : "fetch-failed";
+    /* The backend already computes exactly what this project needs next
+       (run_engine sets next_action, e.g. "Export + upload the Revit JSON.").
+       It was previously typed on the frontend and never rendered. */
+    try {
+      const run = await api("/api/pipeline/run");
+      store.nextAction = run && run.next_action ? run.next_action : null;
+    } catch { store.nextAction = null; }
+    emit("refresh");
   }
-  if (!ok) { if (first) window.location.href = "/pipeline.html"; return; }
+  /* Deliberately NO redirect. Bouncing to /pipeline.html on any failure made a
+     missing input and a broken backend look identical, and dropped the user on
+     a page they did not ask for — which is why the dashboard's own controls
+     appeared to be "doing nothing". The empty state below explains the
+     situation and offers the next step instead. */
+  if (!ok) return;
   try {
     const ei = await api("/api/elements/intelligence");
     for (const s of ei.sheets) {

@@ -594,3 +594,17 @@ header{background:rgba(22,24,29,.4) !important;border-bottom:1px solid rgba(255,
 
 /* Nothing should ever push the page wider than the viewport. */
 html, body { max-width: 100%; overflow-x: hidden; }
+
+/* Hint under the create-project inputs: says plainly that BOTH files are
+   needed before the pipeline can produce a result. A project with only a PDF
+   used to be creatable with no indication it could never finish. */
+.pm-hint { margin: -2px 0 2px; font-size: 12px; opacity: .8; }
+
+/* Dashboard empty state — replaces the silent redirect to /pipeline.html.
+   States what is wrong and offers the concrete next step the backend already
+   computed (run_state.next_action). */
+.empty-state--block { display:flex; flex-direction:column; align-items:flex-start;
+  gap:8px; padding:18px 16px; line-height:1.5; }
+.empty-state--block strong { font-size:14px; color:var(--fg); }
+.empty-state--block p { margin:0; color:var(--muted); font-size:13px; }
+.empty-state--block button { margin-top:2px; }
