@@ -3,4 +3,7 @@
  *  dashboard's src/api.js. Both surfaces now share one auth/error/fetch
  *  implementation instead of two independent copies. */
 
-export { authToken, tokenized, ApiError, pipelineApi as api } from "../../shared/api";
+export {
+  authToken, tokenized, ApiError, pipelineApi as api,
+  setProjectHeader, currentProject, projectScoped,
+} from "../../shared/api";

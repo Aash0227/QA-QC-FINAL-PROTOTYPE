@@ -43,12 +43,49 @@ export function tokenized(url: string): string {
   return t ? url + (url.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(t) : url;
 }
 
-// Project preference (BUG-03): active project is a UI-only preference today —
-// /api/projects/activate persists it server-side, so no X-Project header is
-// required yet. This is the seam for when routes go header-scoped.
-let projectHeader: string | null = null;
+/* Project scoping (BUG-03).
+ *
+ * The backend has been per-request project-scoped for a while: routers/common
+ * resolves `X-Project` -> `?project=` -> the persisted global file. The
+ * frontend never sent the header, so EVERY tab fell through to the one global
+ * active_project.json. Two tabs on different projects meant the last one to
+ * press Open silently retargeted the other, which then kept rendering its old
+ * data while new fetches returned a different project's — a wrong-answer bug
+ * in a tool that issues QA verdicts.
+ *
+ * The slug is persisted per browser so a reload keeps the tab on its project
+ * instead of inheriting whatever another tab last activated. */
+const PROJECT_KEY = "qbc.project";
+
+function readStoredProject(): string | null {
+  try {
+    return localStorage.getItem(PROJECT_KEY);
+  } catch {
+    return null; // private mode / storage disabled — fall back to server state
+  }
+}
+
+let projectHeader: string | null = readStoredProject();
+
 export function setProjectHeader(slug: string | null): void {
   projectHeader = slug || null;
+  try {
+    if (slug) localStorage.setItem(PROJECT_KEY, slug);
+    else localStorage.removeItem(PROJECT_KEY);
+  } catch {
+    /* header still applies for this page's lifetime */
+  }
+}
+
+/** The project this tab is pinned to, if any. */
+export function currentProject(): string | null {
+  return projectHeader;
+}
+
+/** Append ?project= to a URL that cannot carry headers (SSE, downloads). */
+export function projectScoped(url: string): string {
+  if (!projectHeader) return url;
+  return url + (url.includes("?") ? "&" : "?") + "project=" + encodeURIComponent(projectHeader);
 }
 
 function authHeaders(): Record<string, string> {

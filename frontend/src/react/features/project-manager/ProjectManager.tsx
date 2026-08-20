@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-import { api } from "../../../api";
+import { api, setProjectHeader } from "../../../api";
 import { toast } from "../../../util";
 
 import type { ProjectDetail, ProjectSummary } from "./types";
@@ -506,6 +506,13 @@ export function ProjectManager() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ slug }),
       });
+      // Pin THIS tab to the project before reloading. Without it every
+      // request fell through to the one global active_project.json, so two
+      // tabs on different projects silently fought and the loser kept
+      // rendering stale data. Setting it before the reload also removes the
+      // race the 500ms delay was papering over: whatever fetches fire after
+      // the reload are already scoped.
+      setProjectHeader(slug);
       toast(`Opening ${slug}…`);
       setTimeout(() => location.reload(), 500);
     } catch (e) {
@@ -566,6 +573,10 @@ export function ProjectManager() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ slug: others[0].slug }),
         });
+        // Deleting the open project moves this tab to the fallback; the
+        // pinned slug must follow or the tab keeps requesting a project that
+        // no longer exists.
+        setProjectHeader(others[0].slug);
       }
       await api(`/api/projects/${encodeURIComponent(slug)}`, { method: "DELETE" });
       setConfirmState(null);

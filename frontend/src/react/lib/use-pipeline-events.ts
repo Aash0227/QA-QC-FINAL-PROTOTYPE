@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-import { tokenized } from "@/lib/api";
+import { projectScoped, tokenized } from "@/lib/api";
 
 import type { PipelineEvent } from "@/types/pipeline";
 
@@ -22,10 +22,15 @@ export interface PipelineEventsState {
 
 const EVENTS_URL = "./api/pipeline/events";
 
-/** SSE URL with the auth token appended when present (EventSource can't set
- *  headers) — same contract as the vanilla sse.js client. */
+/** SSE URL with the auth token AND the project appended when present.
+ *
+ *  EventSource cannot set headers, so both travel as query params —
+ *  routers/common resolves ?project= exactly as it resolves X-Project. Without
+ *  the project the stream fell back to the globally-active project, which is
+ *  how this page came to render another project's stage completions as its
+ *  own. Same contract as the vanilla sse.js client. */
 export function pipelineEventsUrl(): string {
-  return tokenized(EVENTS_URL);
+  return tokenized(projectScoped(EVENTS_URL));
 }
 
 /**

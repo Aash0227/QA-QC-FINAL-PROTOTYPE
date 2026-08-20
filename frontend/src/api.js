@@ -6,4 +6,4 @@
    copies. Every existing call site (`import { api } from "../api.js"`,
    `authToken()`, `tokenized()`, `setProjectHeader()`) is unchanged. */
 
-export { authToken, tokenized, setProjectHeader, apiFetch as api } from "./shared/api";
+export { authToken, tokenized, setProjectHeader, currentProject, projectScoped, apiFetch as api } from "./shared/api";

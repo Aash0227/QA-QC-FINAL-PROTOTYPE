@@ -13,11 +13,50 @@ export const esc = s => String(s ?? "").replace(/[&<>"']/g,
 export const reduceMotion = () =>
   window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
 
+/* The toast host is created on demand rather than assumed to exist.
+   #toast-box was only in index.html, so every toast() call from the pipeline
+   page threw "Cannot read properties of null (reading 'appendChild')" — which
+   meant a user clicking Report on a project with no results got SILENCE
+   instead of the explanation the code was trying to give them. Creating it
+   lazily fixes every caller on every page at once, rather than adding the
+   markup to one more HTML file and waiting for the next page to hit this. */
+function toastHost() {
+  let host = document.getElementById("toast-box");
+  if (!host) {
+    host = document.createElement("div");
+    host.id = "toast-box";
+    /* Positioning is applied inline ONLY on the host we create. #toast-box is
+       styled in app.css, which the pipeline page does not load; a page that
+       already ships the element keeps its own styling untouched. */
+    Object.assign(host.style, {
+      position: "fixed", bottom: "18px", left: "50%",
+      transform: "translateX(-50%)", display: "flex",
+      flexDirection: "column", gap: "8px", zIndex: "200",
+      pointerEvents: "none",
+    });
+    document.body.appendChild(host);
+  }
+  return host;
+}
+
 export function toast(msg, err = false) {
   const d = document.createElement("div");
   d.className = "toast" + (err ? " err" : "");
   d.textContent = msg;
-  $("#toast-box").appendChild(d);
+  const host = toastHost();
+  host.appendChild(d);
+  /* Fallback styling, applied AFTER insertion so computed style reflects any
+     stylesheet the page actually loaded. app.css styles .toast on the
+     dashboard; the pipeline page loads a different stylesheet entirely, and an
+     unstyled message is barely better than the silence this replaced. */
+  if (getComputedStyle(d).borderRadius === "0px") {
+    Object.assign(d.style, {
+      background: "rgba(15,23,42,.96)",
+      border: "1px solid " + (err ? "#ef4444" : "rgba(255,255,255,.14)"),
+      borderRadius: "11px", padding: "9px 18px", fontSize: "12.5px",
+      color: "#e6edf3", pointerEvents: "auto",
+    });
+  }
   gsap.from(d, { y: 16, opacity: 0, duration: .3 });
   setTimeout(() => gsap.to(d, { opacity: 0, duration: .4, onComplete: () => d.remove() }), 4600);
 }

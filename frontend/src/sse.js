@@ -3,7 +3,7 @@
    plus the wizard's 4s poll with a single shared stream and one slow fallback
    poll. Consumers register onStep(step, cb) / onAny(cb). */
 
-import { tokenized } from "./api.js";
+import { tokenized, projectScoped } from "./api.js";
 
 let es = null;
 const stepSubs = {};   // step -> [cb]
@@ -12,7 +12,11 @@ const anySubs = [];
 function ensure() {
   if (es) return;
   try {
-    es = new EventSource(tokenized("/api/pipeline/events"));
+    /* EventSource cannot send headers, so the project travels as a query
+       param — routers/common resolves ?project= the same way it resolves the
+       X-Project header. Without it the stream fell back to the global active
+       project and a tab could receive another project's events. */
+    es = new EventSource(tokenized(projectScoped("/api/pipeline/events")));
     es.onmessage = ev => {
       let e; try { e = JSON.parse(ev.data); } catch { return; }
       for (const cb of anySubs) { try { cb(e); } catch (err) { console.error(err); } }
